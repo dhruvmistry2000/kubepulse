@@ -1,3 +1,4 @@
+# kubepulse 🫀
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.24+-326CE5?logo=kubernetes&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![GKE](https://img.shields.io/badge/GKE-supported-4285F4?logo=googlecloud&logoColor=white)
@@ -7,7 +8,6 @@
 
 ---
 
-## kubepulse 🫀
 
 kubepulse is a lightweight, self-hosted Kubernetes monitoring dashboard.  
 You install a small agent Helm chart into any cluster, and it securely pushes live data to a
