@@ -11,6 +11,7 @@ on:
 
 env:
   DOCKERHUB_USERNAME: dhruvmistry200
+  GITHUB_USERNAME: dhruvmistry2000
 
 jobs:
   build-and-push:
@@ -51,7 +52,7 @@ jobs:
         with:
           images: |
             dhruvmistry200/kubepulse-dashboard
-            ghcr.io/dhruvmistry200/kubepulse-dashboard
+            ghcr.io/${{ env.GITHUB_USERNAME }}/kubepulse-dashboard
           tags: |
             type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.tag }}
