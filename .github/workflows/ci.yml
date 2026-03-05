@@ -1,0 +1,79 @@
+name: CI Check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint-dashboard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dashboard dependencies
+        run: python -m pip install -r dashboard/requirements.txt
+
+      - name: Check dashboard syntax
+        run: |
+          find dashboard -name "*.py" -exec python -m py_compile {} \;
+          echo "Dashboard syntax OK"
+
+  lint-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install agent dependencies
+        run: python -m pip install -r agent/requirements.txt
+
+      - name: Check agent syntax
+        run: |
+          find agent -name "*.py" -exec python -m py_compile {} \;
+          echo "Agent syntax OK"
+
+  docker-build-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build dashboard image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dashboard
+          file: ./dashboard/Dockerfile
+          push: false
+          tags: kubepulse-dashboard:test
+
+      - name: Build agent image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agent
+          file: ./agent/Dockerfile
+          push: false
+          tags: kubepulse-agent:test
