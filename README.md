@@ -6,10 +6,12 @@
 ![AKS](https://img.shields.io/badge/AKS-supported-0078D4?logo=microsoftazure&logoColor=white)
 ![Helm](https://img.shields.io/badge/Helm-3.x-0F1689?logo=helm&logoColor=white)
 
-> **Quick Start**: Pre-built images are available on Docker Hub.  
+> **Quick Start**: Pre-built images are available on Docker Hub and GitHub Container Registry (GHCR).  
 > You can use them directly without building anything:  
-> - Dashboard: `dhruvmistry200/kubepulse-dashboard:latest`  
-> - Agent: `dhruvmistry200/kubepulse-agent:latest`  
+> - Docker Hub — Dashboard: `dhruvmistry200/kubepulse-dashboard:latest`  
+> - Docker Hub — Agent: `dhruvmistry200/kubepulse-agent:latest`  
+> - GHCR — Dashboard: `ghcr.io/dhruvmistry200/kubepulse-dashboard:latest`  
+> - GHCR — Agent: `ghcr.io/dhruvmistry200/kubepulse-agent:latest`  
 >
 > Want to build your own? See [Building Custom Images](#building-custom-images) below.
 
@@ -36,6 +38,32 @@ single web UI.
 - **Namespace-aware analytics**: Per-namespace graphs and filters.
 - **System namespace filtering**: Hides `kube-system` and similar namespaces by default.
 - **Modern UI**: Dark theme, expandable rows, and cross-linking between resources.
+
+---
+
+## Container Images
+
+Images are available on both Docker Hub and GitHub Container Registry.
+
+### Docker Hub
+
+```bash
+docker pull dhruvmistry200/kubepulse-dashboard:latest
+docker pull dhruvmistry200/kubepulse-agent:latest
+```
+
+### GitHub Container Registry (ghcr.io)
+
+```bash
+docker pull ghcr.io/dhruvmistry200/kubepulse-dashboard:latest
+docker pull ghcr.io/dhruvmistry200/kubepulse-agent:latest
+```
+
+Use whichever registry is closer to your infrastructure:
+
+- Docker Hub: best for general use and Docker Desktop
+- GHCR: best for GitHub Actions pipelines and GitHub-hosted runners
+  (no rate limits when pulling from GHCR inside GitHub Actions)
 
 ---
 
@@ -138,15 +166,24 @@ Note this URL; you will use it in Step 3.
 #### Option B – Docker on any VM
 
 ```bash
+## Using Docker Hub
 docker run -d \
   --name kubepulse-dashboard \
   -p 8080:8080 \
   -e SECRET_KEY=change-me-to-a-strong-secret \
   -e ADMIN_KEY=change-me-to-admin-key \
   dhruvmistry200/kubepulse-dashboard:latest
+
+## Using GHCR
+docker run -d \
+  --name kubepulse-dashboard \
+  -p 8080:8080 \
+  -e SECRET_KEY=change-me-to-a-strong-secret \
+  -e ADMIN_KEY=change-me-to-admin-key \
+  ghcr.io/dhruvmistry200/kubepulse-dashboard:latest
 ```
 
-Place this container behind nginx (or similar) with SSL/TLS termination.  
+Place either container behind nginx (or similar) with SSL/TLS termination.  
 The dashboard **must** be accessible over HTTPS for agents to reach it.
 
 #### Option C – Inside Kubernetes
