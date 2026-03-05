@@ -1,0 +1,3626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>K8s Dashboard</title>
+  <style>
+    :root {
+      --bg-dark: #0d1117;
+      --bg-card: #161b22;
+      --bg-hover: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+      --orange: #db6d28;
+      --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .navbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+    .navbar-left { display: flex; align-items: center; gap: 12px; }
+    .navbar h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    .navbar .clusters-badge {
+      background: var(--bg-hover);
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+    }
+    .navbar .clusters-badge.healthy { color: var(--green); }
+    .btn-refresh {
+      background: var(--bg-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .btn-refresh:hover { background: var(--border); }
+    .btn-refresh:disabled { opacity: 0.6; cursor: not-allowed; }
+    .layout {
+      display: flex;
+      min-height: calc(100vh - 52px);
+    }
+    .sidebar {
+      position: relative;
+      width: 240px;
+      min-width: 240px;
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      padding: 12px 0;
+      overflow-y: auto;
+      transition: width 0.25s ease;
+    }
+    .sidebar.collapsed {
+      width: 48px;
+      min-width: 48px;
+    }
+    .sidebar-title {
+      padding: 8px 16px;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .sidebar.collapsed .sidebar-title {
+      display: none;
+    }
+    .sidebar-toggle {
+      position: absolute;
+      right: -12px;
+      top: 16px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      z-index: 10;
+    }
+    .cluster-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px 8px;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+    }
+    .cluster-item:hover { background: var(--bg-hover); }
+    .cluster-item.active { background: var(--bg-hover); border-left-color: var(--accent); }
+    .cluster-item .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .sidebar.collapsed .cluster-item {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 10px 4px;
+      width: 48px;
+    }
+    .sidebar.collapsed .cluster-item .name,
+    .sidebar.collapsed .cluster-item .cluster-actions {
+      display: none;
+    }
+    .cluster-item .status-dot.healthy { background: var(--green); }
+    .cluster-item .status-dot.stale { background: var(--red); }
+    .cluster-item .name { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cluster-item .ago { font-size: 0.75rem; color: var(--text-muted); }
+    /* Sidebar delete UX: subtle red icon, only visible on hover */
+    .cluster-item .cluster-actions { display: flex; align-items: center; gap: 8px; }
+    .cluster-item .btn-delete {
+      display: none;
+      background: transparent;
+      border: none;
+      padding: 2px 4px;
+      color: rgba(248, 81, 73, 0.9);
+      cursor: pointer;
+      font-size: 0.95rem;
+      line-height: 1;
+    }
+    .cluster-item:hover .btn-delete { display: inline-block; }
+    .cluster-item .btn-delete:hover { color: var(--red); }
+    .cluster-item .delete-confirm {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .cluster-item .delete-confirm a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+    .cluster-item .delete-confirm a.danger { color: var(--red); }
+    .cluster-item .delete-confirm button { background: none; border: none; padding: 0; cursor: pointer; font: inherit; color: var(--accent); text-decoration: underline; }
+    .cluster-item .delete-confirm button.danger { color: var(--red); }
+    .cluster-item .delete-error { margin-top: 6px; font-size: 0.8rem; color: var(--red); }
+    .cluster-item .cluster-meta-line {
+      margin-top: 2px;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+    .cluster-item .cluster-warning {
+      color: var(--yellow);
+    }
+    .cluster-item .short-name {
+      display: none;
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .sidebar.collapsed .cluster-item .short-name {
+      display: block;
+    }
+    .sidebar.collapsed .cluster-item .cluster-meta-line {
+      display: none;
+    }
+    .sidebar-empty {
+      padding: 20px 16px;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+    .main-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 12px 20px 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-dark);
+    }
+    .main-tab {
+      padding: 10px 16px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .main-tab:hover { color: var(--text); background: var(--bg-hover); }
+    .main-tab.active { background: var(--bg-card); color: var(--text); border-color: var(--border); margin-bottom: -1px; }
+    .main-content { flex: 1; overflow: auto; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    .summary-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card .value { font-size: 1.5rem; font-weight: 700; }
+    .card .label { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+    .card.warn { border-color: var(--yellow); }
+    .card.error { border-color: var(--red); }
+    .card.ok { border-color: var(--green); }
+    .stale-banner {
+      background: rgba(248, 81, 73, 0.15);
+      border: 1px solid var(--red);
+      color: var(--red);
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { background: var(--accent); color: var(--bg-dark); border-color: var(--accent); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .filter-input {
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 12px;
+      padding: 8px 12px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+    .filter-input::placeholder { color: var(--text-muted); }
+    /* Dark theme dropdowns (namespace filter) */
+    select, .select-dark {
+      background: var(--bg-dark);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 0.875rem;
+    }
+    .filter-bar {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .filter-bar .label { font-size: 0.8rem; color: var(--text-muted); }
+    .filter-bar .filter-input-inline {
+      width: 280px;
+      max-width: 100%;
+      padding: 8px 10px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+    .filter-bar .filter-input-inline::placeholder { color: var(--text-muted); }
+    .filter-bar .btn-clear {
+      display: none;
+      background: var(--bg-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      margin-left: auto;
+    }
+    .filter-bar .btn-clear:hover { background: var(--border); }
+    .filter-bar.has-filters .btn-clear { display: inline-block; }
+
+    /* Tags / pills (labels, selectors, images, keys) */
+    .tags-cell { max-width: 280px; white-space: normal; }
+    .tag {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(88, 166, 255, 0.3);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 0.7rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      display: inline-block;
+      margin: 2px;
+      white-space: nowrap;
+    }
+    .tag-muted {
+      background: rgba(139, 148, 158, 0.12);
+      color: var(--text-muted);
+      border: 1px solid rgba(139, 148, 158, 0.25);
+      cursor: pointer;
+    }
+    .tag-green { background: rgba(63, 185, 80, 0.2); color: var(--green); border-color: rgba(63, 185, 80, 0.35); }
+    .tag-red { background: rgba(248, 81, 73, 0.2); color: var(--red); border-color: rgba(248, 81, 73, 0.35); }
+
+    /* Expandable row details */
+    .chev-col { width: 32px; min-width: 32px; }
+    .chev {
+      display: inline-block;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      transition: transform 160ms ease;
+      transform-origin: center;
+    }
+    tr.expanded .chev { transform: rotate(90deg); } /* ▶ -> ▼ via rotation */
+    tr.detail-row td {
+      padding: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .detail-panel {
+      background: var(--bg-dark);
+      border-top: 1px solid var(--border);
+      padding: 0 20px;
+      font-size: 0.85rem;
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 220ms ease;
+    }
+    tr.detail-row.open .detail-panel {
+      padding: 16px 20px;
+      max-height: 1200px; /* higher cap for expanded detail sections */
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px 18px;
+      align-items: start;
+    }
+    .detail-item .title { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 6px; }
+    .detail-item .value { color: var(--text); }
+    .copyable { cursor: pointer; text-decoration: underline; text-decoration-color: rgba(88, 166, 255, 0.35); }
+    .copyable:hover { color: var(--accent); }
+    .link {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+    .link:hover {
+      opacity: 0.85;
+    }
+    .container-card {
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+    .container-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+    .mini-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .mini-table th,
+    .mini-table td {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .mini-table th {
+      background: var(--bg-hover);
+      font-weight: 600;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .progress {
+      position: relative;
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0;
+      background: var(--green);
+      transition: width 160ms ease;
+    }
+    .progress-bar-fill.warn { background: var(--yellow); }
+    .progress-bar-fill.danger { background: var(--red); }
+    .badge-qos-guaranteed { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+    .badge-qos-burstable { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
+    .badge-qos-besteffort { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-card);
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: var(--bg-hover); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); }
+    tr:hover { background: var(--bg-hover); }
+    td { font-size: 0.875rem; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .badge-running, .badge-ready { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+    .badge-pending { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
+    .badge-failed, .badge-error, .badge-notready { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+    .badge-terminating { background: rgba(219, 109, 40, 0.2); color: var(--orange); }
+    .badge-healthy { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+    .badge-unhealthy { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+    .badge-partial { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
+    .badge-muted { background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); }
+    .chart-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .chart-card h3 {
+      margin: 0 0 16px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .chart-card .chart-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      margin-top: -10px;
+    }
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 0.8rem;
+    }
+    .bar-label {
+      width: 160px;
+      min-width: 160px;
+      text-align: right;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 0.75rem;
+    }
+    .bar-track {
+      flex: 1;
+      height: 18px;
+      background: var(--bg-hover);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+      min-width: 2px;
+    }
+    .bar-value {
+      width: 100px;
+      min-width: 100px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .bar-fill-accent { background: var(--accent); }
+    .bar-fill-green { background: var(--green); }
+    .bar-fill-yellow { background: var(--yellow); }
+    .bar-fill-red { background: var(--red); }
+    .bar-fill-muted { background: var(--text-muted); opacity: 0.4; }
+    .chart-empty {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 24px 0;
+    }
+    .donut-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 16px;
+      justify-content: center;
+    }
+    .donut-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .donut-legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .graphs-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .graphs-header h2 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+    .footer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 16px;
+      padding: 8px 0;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .spinner { width: 24px; height: 24px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(13, 17, 23, 0.8);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    .loading-overlay.hidden { display: none; }
+    .loading-content { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text-muted); }
+    .view-placeholder {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .toggle-switch {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 3px;
+      top: 3px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background: rgba(88, 166, 255, 0.3);
+    }
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(16px);
+      background: var(--accent);
+    }
+    /* Add Cluster tab */
+    .add-cluster-panel { padding: 24px; max-width: 720px; }
+    .add-cluster-panel h2 { margin-top: 0; font-size: 1.25rem; }
+    .add-cluster-panel .form-group { margin-bottom: 20px; }
+    .add-cluster-panel label { display: block; margin-bottom: 6px; font-size: 0.875rem; color: var(--text-muted); }
+    .add-cluster-panel input[type="text"], .add-cluster-panel input[type="password"] {
+      width: 100%;
+      max-width: 400px;
+      padding: 10px 12px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+    .add-cluster-panel .hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; }
+    .add-cluster-panel .validation { margin-top: 4px; font-size: 0.875rem; }
+    .add-cluster-panel .validation.valid { color: var(--green); }
+    .add-cluster-panel .validation.invalid { color: var(--red); }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg-dark);
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary {
+      background: var(--bg-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { background: var(--border); }
+    .token-block {
+      margin-top: 24px;
+      padding: 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .token-block .success-banner {
+      background: rgba(63, 185, 80, 0.15);
+      border: 1px solid var(--green);
+      color: var(--green);
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .token-block .countdown {
+      font-size: 2rem;
+      font-weight: 700;
+      margin: 12px 0;
+    }
+    .token-block .countdown.low { color: var(--red); }
+    .token-block .code-block {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.8rem;
+      overflow-x: auto;
+      white-space: pre;
+      margin: 12px 0;
+    }
+    .token-block .code-block-wrap {
+      position: relative;
+      margin: 12px 0;
+    }
+    .token-block .code-block-wrap .code-block {
+      margin: 0;
+      padding-bottom: 36px; /* room for Copy button */
+    }
+    .token-block .btn-copy-inside {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: var(--bg-hover);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .token-block .btn-copy-inside:hover { background: var(--border); color: var(--text); }
+    .token-block .token-row {
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.8rem;
+      margin: 12px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .token-block .token-row input[type="password"],
+    .token-block .token-row input[type="text"] {
+      flex: 1;
+      min-width: 200px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      font-size: 0.8rem;
+    }
+    .token-block .token-row .token-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .token-block .inline-error { color: var(--red); margin-top: 8px; }
+    .token-block .view-cluster-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="navbar-left">
+      <h1>K8s Dashboard</h1>
+      <span class="clusters-badge" id="clustersBadge">0 clusters</span>
+    </div>
+    <span id="refreshIndicator" style="
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      margin-right: 8px;
+    ">↻ Refreshing...</span>
+    <button class="btn-refresh" id="btnRefresh" type="button">Refresh Now</button>
+  </nav>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Toggle sidebar"></button>
+      <div class="sidebar-title">Clusters</div>
+      <div id="clusterList"></div>
+      <div class="sidebar-empty" id="sidebarEmpty" style="display:none;">
+        No clusters connected yet. Install the Helm chart on a cluster to get started.
+      </div>
+    </aside>
+
+    <div class="main-content">
+      <div class="main-tabs">
+        <button class="main-tab" data-page="cluster" id="mainTabCluster" type="button">Cluster</button>
+        <button class="main-tab active" data-page="add" id="mainTabAdd" type="button">➕ Add Cluster</button>
+      </div>
+
+      <div id="pageAdd" class="container add-cluster-panel">
+        <h2>Add a new cluster</h2>
+        <div class="form-group">
+          <label>Cluster name</label>
+          <input type="text" id="addClusterName" placeholder="e.g. production, staging-eu, dev" />
+          <div class="hint">Use lowercase letters, numbers and hyphens only</div>
+          <div class="validation" id="clusterNameValidation"></div>
+        </div>
+        <div class="form-group">
+          <label>Admin key (required to generate token)</label>
+          <input type="password" id="addAdminKey" placeholder="Same as SECRET_KEY or ADMIN_KEY env" />
+        </div>
+        <button class="btn-primary" id="btnGenerateToken" type="button" disabled>Generate Install Token</button>
+
+        <div class="token-block" id="tokenBlock" style="display:none;">
+          <div class="success-banner" id="tokenSuccessBanner">✅ Token generated! You have 10 minutes to run this command.</div>
+          <div id="tokenCountdown" class="countdown">10:00</div>
+          <div id="tokenExpiredMsg" style="display:none;">⏰ Token expired. Click below to generate a new one.</div>
+
+          <p style="margin: 12px 0 4px; font-size: 0.875rem;">Registration Token</p>
+          <div class="token-row">
+            <input type="password" id="registrationTokenInput" readonly placeholder="••••••••••••••••••" aria-label="Registration Token" />
+            <div class="token-actions">
+              <button class="btn-secondary" id="btnToggleToken" type="button">Show</button>
+              <button class="btn-secondary" id="btnCopyToken" type="button">Copy Token</button>
+            </div>
+          </div>
+
+          <p style="margin: 12px 0 4px; font-size: 0.875rem;">Helm Install Command</p>
+          <div class="code-block-wrap">
+            <div class="code-block" id="helmCommand"></div>
+            <button class="btn-copy-inside" id="btnCopyCommand" type="button">Copy Command</button>
+          </div>
+          <button class="btn-secondary" id="btnNewToken" type="button">Generate New Token</button>
+          <div id="addClusterStatus" style="margin-top:16px; font-size:0.875rem;"></div>
+        </div>
+        <div id="addClusterError" class="inline-error" style="display:none;"></div>
+        <div id="dashboardUrlWarning" style="margin-top:16px; color: var(--yellow); font-size: 0.875rem; display:none;"></div>
+      </div>
+
+      <div id="pageCluster" class="container" style="display:none;">
+        <div id="staleBanner" class="stale-banner" style="display:none;">⚠ No data received from this cluster in the last 90 seconds</div>
+        <div class="summary-row" id="summaryRow"></div>
+        <div id="globalFilterBar" style="display:none;"></div>
+        <div class="tabs" id="tabs"></div>
+        <div id="tabPanels"></div>
+        <div class="footer-bar">
+          <span id="lastUpdated">Last updated: —</span>
+        </div>
+      </div>
+
+      <div id="pageClusterPlaceholder" class="view-placeholder" style="display:none;">
+        Select a cluster from the sidebar or add a new one.
+      </div>
+    </div>
+  </div>
+
+  <div class="loading-overlay hidden" id="loadingOverlay">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <span>Loading...</span>
+    </div>
+  </div>
+
+  <script>
+    const TAB_IDS = ['graphs', 'nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps'];
+    const CLUSTERS_POLL_MS = 10000;
+    const CLUSTER_DATA_POLL_MS = 15000;
+    const ADD_CLUSTER_POLL_MS = 5000;
+    const HEALTHY_SECONDS = 90;
+    const TOKEN_EXPIRY_SECONDS = 600;
+
+    let selectedCluster = null;
+    let clustersList = [];
+    let lastClusterFetchTime = 0;
+    let tokenExpiresAt = null;
+    let tokenCountdownInterval = null;
+    // Admin key entered in Add Cluster tab (persisted in-memory for this page).
+    // Used for both token generation and cluster deletion.
+    let adminKey = '';
+
+    // Global filters (apply to most resource tabs)
+    const SYSTEM_NAMESPACES = new Set([
+      // Kubernetes core
+      'kube-system',
+      'kube-public', 
+      'kube-node-lease',
+      // GKE specific
+      'gke-system',
+      'gke-managed-filestorecsi',
+      'gke-managed-system',
+      'gke-gmp-system',
+      'config-management-system',
+      'config-management-monitoring',
+      'gatekeeper-system',
+      'istio-system',
+      'anthos-identity-service',
+      'cert-manager',
+      // EKS specific
+      'amazon-cloudwatch',
+      'amazon-guardduty',
+      'aws-node-termination-handler',
+      'aws-observability',
+      'aws-privateca-issuer',
+      'aws-load-balancer-controller',
+      'external-dns',
+      'cluster-autoscaler',
+      'karpenter',
+      'aws-for-fluent-bit',
+      // AKS specific
+      'azure-arc',
+      'azure-extensions-usage-system',
+      'calico-system',
+      'tigera-operator',
+      'aks-command-ns',
+      'azureml',
+      // Common infra namespaces
+      'monitoring',
+      'logging',
+      'ingress-nginx',
+      'ingress',
+      'cert-manager',
+      'external-secrets',
+      'argocd',
+      'flux-system',
+      'velero',
+      'vault',
+      'prometheus',
+      'grafana',
+      'datadog',
+      'newrelic',
+      'elastic-system',
+    ]);
+    let hideSystemNamespaces = true;
+    let selectedNamespace = 'all';
+    let labelFilter = ''; // key=value format
+
+    // Sidebar collapsed state (persisted in localStorage).
+    let sidebarCollapsed = false;
+
+    // Add Cluster: stored after generating token; reset when cluster name changes or new token generated.
+    let currentToken = null;
+    let currentHelmCommand = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+
+    function el(id) { return document.getElementById(id); }
+    function qs(sel, root = document) { return root.querySelector(sel); }
+    function qsa(sel, root = document) { return root.querySelectorAll(sel); }
+
+    function setLoading(show) {
+      el('loadingOverlay').classList.toggle('hidden', !show);
+    }
+
+    // Sidebar helpers: remember collapsed state and update button + layout.
+    function applySidebarState() {
+      const sidebarEl = el('sidebar');
+      const toggleEl = el('sidebarToggle');
+      if (!sidebarEl || !toggleEl) return;
+      sidebarEl.classList.toggle('collapsed', sidebarCollapsed);
+      toggleEl.textContent = sidebarCollapsed ? '▶' : '◀';
+    }
+
+    function loadSidebarState() {
+      try {
+        const stored = window.localStorage.getItem('sidebarCollapsed');
+        if (stored === 'true') sidebarCollapsed = true;
+        if (stored === 'false') sidebarCollapsed = false;
+      } catch (e) {
+        sidebarCollapsed = false;
+      }
+      applySidebarState();
+    }
+
+    function toggleSidebar() {
+      sidebarCollapsed = !sidebarCollapsed;
+      try {
+        window.localStorage.setItem('sidebarCollapsed', sidebarCollapsed ? 'true' : 'false');
+      } catch (e) {
+        // Ignore storage failures; state will simply not persist.
+      }
+      applySidebarState();
+    }
+
+    function formatAge(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+      if (sec < 60) return sec + 's ago';
+      if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+      if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+      return Math.floor(sec / 86400) + 'd ago';
+    }
+
+    function formatAgeShort(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+      if (sec < 60) return sec + 's';
+      if (sec < 3600) return Math.floor(sec / 60) + 'm';
+      return Math.floor(sec / 3600) + 'h';
+    }
+
+    function podStatusClass(s) {
+      const v = (s || '').toLowerCase();
+      if (v === 'running') return 'badge-running';
+      if (v === 'pending') return 'badge-pending';
+      if (v === 'failed' || v === 'error') return 'badge-failed';
+      if (v === 'terminating') return 'badge-terminating';
+      return '';
+    }
+    function nodeStatusClass(s) {
+      return (s || '').toLowerCase() === 'ready' ? 'badge-ready' : 'badge-notready';
+    }
+    function deploymentClass(ready, desired) {
+      if (desired === 0) return 'badge-partial';
+      if (ready === desired) return 'badge-healthy';
+      if (ready === 0) return 'badge-unhealthy';
+      return 'badge-partial';
+    }
+
+    // Helpers to parse Kubernetes quantities for basic percentage calculations.
+    function cpuToMillis(cpu) {
+      const v = String(cpu || '').trim();
+      if (!v) return null;
+      if (v.endsWith('m')) {
+        const n = parseFloat(v.slice(0, -1));
+        return Number.isFinite(n) ? n : null;
+      }
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n * 1000 : null;
+    }
+
+    function memoryToBytes(mem) {
+      const v = String(mem || '').trim();
+      if (!v) return null;
+      const match = /^([\d.]+)\s*([KMGTP]i?)?$/i.exec(v);
+      if (!match) {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      const num = parseFloat(match[1]);
+      if (!Number.isFinite(num)) return null;
+      const unit = (match[2] || '').toLowerCase();
+      const table = { ki: 1024, k: 1024, mi: 1024 ** 2, m: 1024 ** 2, gi: 1024 ** 3, g: 1024 ** 3, ti: 1024 ** 4, t: 1024 ** 4, pi: 1024 ** 5, p: 1024 ** 5 };
+      const mul = table[unit] || 1;
+      return num * mul;
+    }
+
+    function percentage(used, alloc) {
+      if (used == null || alloc == null || alloc === 0) return null;
+      const pct = (used / alloc) * 100;
+      if (!Number.isFinite(pct)) return null;
+      return Math.max(0, Math.min(100, Math.round(pct)));
+    }
+
+    function formatCpuCell(usageRaw, capacityRaw) {
+      // usageRaw is like "135881319n" (nanocores) or "500m" (millicores)
+      // capacityRaw is like "4" (cores) or "4000m"
+      // Returns "12% (0.5 / 4 cores)" or "—" if no data
+      let usedMillis = null;
+      if (usageRaw) {
+        const s = String(usageRaw).trim();
+        if (s.endsWith('n')) {
+          // nanocores → millicores
+          usedMillis = parseFloat(s.slice(0, -1)) / 1e6;
+        } else {
+          usedMillis = cpuToMillis(s);
+        }
+      }
+      const capMillis = cpuToMillis(capacityRaw);
+      if (usedMillis == null || capMillis == null || capMillis === 0) {
+        // If no usage metrics, just show capacity
+        if (capMillis != null) {
+          const cores = (capMillis / 1000).toFixed(0);
+          return `<span style="color: var(--text-muted);">${cores} cores</span>`;
+        }
+        return '—';
+      }
+      const pct = Math.min(100, Math.round((usedMillis / capMillis) * 100));
+      const usedCores = (usedMillis / 1000).toFixed(2);
+      const capCores = (capMillis / 1000).toFixed(0);
+      const color = pct > 80 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+      return `
+        <div style="min-width:120px;">
+          <div style="display:flex; justify-content:space-between; font-size:0.75rem; margin-bottom:3px;">
+            <span style="color:${color}; font-weight:600;">${pct}%</span>
+            <span style="color:var(--text-muted);">${usedCores}/${capCores} cores</span>
+          </div>
+          <div class="progress">
+            <div class="progress-bar-fill ${pct > 80 ? 'danger' : pct >= 60 ? 'warn' : ''}" style="width:${pct}%;"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function formatMemoryCell(usageRaw, capacityRaw) {
+      // usageRaw like "1731356Ki", capacityRaw like "4015664Ki"
+      // Returns "43% (1.65GB / 3.83GB)" with a progress bar
+      const usedBytes = memoryToBytes(usageRaw);
+      const capBytes = memoryToBytes(capacityRaw);
+      if (usedBytes == null || capBytes == null || capBytes === 0) {
+        if (capBytes != null) {
+          const gb = (capBytes / (1024 ** 3)).toFixed(1);
+          return `<span style="color: var(--text-muted);">${gb} GB</span>`;
+        }
+        return '—';
+      }
+      const pct = Math.min(100, Math.round((usedBytes / capBytes) * 100));
+      const usedGB = (usedBytes / (1024 ** 3)).toFixed(2);
+      const capGB = (capBytes / (1024 ** 3)).toFixed(1);
+      const color = pct > 80 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+      return `
+        <div style="min-width:140px;">
+          <div style="display:flex; justify-content:space-between; font-size:0.75rem; margin-bottom:3px;">
+            <span style="color:${color}; font-weight:600;">${pct}%</span>
+            <span style="color:var(--text-muted);">${usedGB}/${capGB} GB</span>
+          </div>
+          <div class="progress">
+            <div class="progress-bar-fill ${pct > 80 ? 'danger' : pct >= 60 ? 'warn' : ''}" style="width:${pct}%;"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function formatPodCpuCell(usageRaw, requestRaw, limitRaw) {
+      // Convert nanocores usage to millicores
+      let usedMillis = null;
+      if (usageRaw) {
+        const s = String(usageRaw).trim();
+        if (s.endsWith('n')) {
+          usedMillis = parseFloat(s.slice(0, -1)) / 1e6;
+        } else {
+          usedMillis = cpuToMillis(s);
+        }
+      }
+      const reqMillis = cpuToMillis(requestRaw);
+      const limMillis = cpuToMillis(limitRaw);
+
+      // Baseline for % is limit if available, else request, else null
+      const baseline = limMillis || reqMillis;
+
+      const usedStr = usedMillis != null
+        ? (usedMillis >= 1000
+            ? (usedMillis / 1000).toFixed(2) + ' cores'
+            : Math.round(usedMillis) + 'm')
+        : null;
+      const reqStr = reqMillis != null
+        ? (reqMillis >= 1000
+            ? (reqMillis / 1000).toFixed(1) + ' cores'
+            : Math.round(reqMillis) + 'm')
+        : null;
+      const limStr = limMillis != null
+        ? (limMillis >= 1000
+            ? (limMillis / 1000).toFixed(1) + ' cores'
+            : Math.round(limMillis) + 'm')
+        : null;
+
+      if (usedMillis == null && reqMillis == null && limMillis == null) {
+        return '<span style="color: var(--text-muted);">—</span>';
+      }
+
+      // Build progress bar only if we have usage + baseline
+      let barHtml = '';
+      if (usedMillis != null && baseline) {
+        const pct = Math.min(100, Math.round((usedMillis / baseline) * 100));
+        const color = pct > 80 ? 'danger' : pct >= 60 ? 'warn' : '';
+        barHtml = `
+        <div class="progress" style="margin-top:3px;">
+          <div class="progress-bar-fill ${color}" style="width:${pct}%;"></div>
+        </div>
+      `;
+      }
+
+      const lines = [];
+      if (usedStr) lines.push(`<span style="font-weight:600; color:var(--text);">${escapeHtml(usedStr)}</span>`);
+      const meta = [reqStr ? `req ${escapeHtml(reqStr)}` : null, limStr ? `lim ${escapeHtml(limStr)}` : null].filter(Boolean);
+      if (meta.length) lines.push(`<span style="color:var(--text-muted); font-size:0.7rem;">${meta.join(' / ')}</span>`);
+
+      return `<div style="min-width:100px;">${lines.join('<br/>')}${barHtml}</div>`;
+    }
+
+    function formatPodMemoryCell(usageRaw, requestRaw, limitRaw) {
+      const usedBytes = memoryToBytes(usageRaw);
+      const reqBytes = memoryToBytes(requestRaw);
+      const limBytes = memoryToBytes(limitRaw);
+      const baseline = limBytes || reqBytes;
+
+      function fmtBytes(b) {
+        if (b == null) return null;
+        if (b >= 1024 ** 3) return (b / (1024 ** 3)).toFixed(2) + ' GB';
+        if (b >= 1024 ** 2) return (b / (1024 ** 2)).toFixed(0) + ' MB';
+        return (b / 1024).toFixed(0) + ' KB';
+      }
+
+      if (usedBytes == null && reqBytes == null && limBytes == null) {
+        return '<span style="color: var(--text-muted);">—</span>';
+      }
+
+      let barHtml = '';
+      if (usedBytes != null && baseline) {
+        const pct = Math.min(100, Math.round((usedBytes / baseline) * 100));
+        const color = pct > 80 ? 'danger' : pct >= 60 ? 'warn' : '';
+        barHtml = `
+        <div class="progress" style="margin-top:3px;">
+          <div class="progress-bar-fill ${color}" style="width:${pct}%;"></div>
+        </div>
+      `;
+      }
+
+      const lines = [];
+      const usedStr = fmtBytes(usedBytes);
+      const reqStr = fmtBytes(reqBytes);
+      const limStr = fmtBytes(limBytes);
+      if (usedStr) lines.push(`<span style="font-weight:600; color:var(--text);">${escapeHtml(usedStr)}</span>`);
+      const meta = [reqStr ? `req ${escapeHtml(reqStr)}` : null, limStr ? `lim ${escapeHtml(limStr)}` : null].filter(Boolean);
+      if (meta.length) lines.push(`<span style="color:var(--text-muted); font-size:0.7rem;>${meta.join(' / ')}</span>`);
+
+      return `<div style="min-width:110px;">${lines.join('<br/>')}${barHtml}</div>`;
+    }
+
+    function formatMemBytes(raw) {
+      const b = memoryToBytes(raw);
+      if (b == null) return escapeHtml(String(raw ?? '—'));
+      if (b >= 1024 ** 3) return (b / (1024 ** 3)).toFixed(2) + ' GB';
+      if (b >= 1024 ** 2) return (b / (1024 ** 2)).toFixed(0) + ' MB';
+      return (b / 1024).toFixed(0) + ' KB';
+    }
+
+    function qosBadgeClass(qos) {
+      const v = (qos || '').toLowerCase();
+      if (v === 'guaranteed') return 'badge-qos-guaranteed';
+      if (v === 'burstable') return 'badge-qos-burstable';
+      if (v === 'besteffort' || v === 'best-effort') return 'badge-qos-besteffort';
+      return '';
+    }
+
+    function validateClusterName(name) {
+      if (!name || name.length > 40) return false;
+      return /^[a-z0-9\-_]+$/.test(name);
+    }
+
+    function getClusterShortName(name) {
+      if (!name) return '';
+      const s = String(name);
+      return s.slice(0, 4);
+    }
+
+    function renderClusterSidebarItem(c) {
+      const isActive = selectedCluster === c.name;
+      const summary = c.summary || {};
+      const totalNodes = typeof summary.totalNodes === 'number' ? summary.totalNodes : null;
+      const totalPods = typeof summary.totalPods === 'number' ? summary.totalPods : null;
+      const pending = typeof summary.pendingPods === 'number' ? summary.pendingPods : 0;
+      const failed = typeof summary.failedPods === 'number' ? summary.failedPods : 0;
+      const warningCount = (pending || 0) + (failed || 0);
+
+      const statsParts = [];
+      if (totalNodes != null) statsParts.push(`${totalNodes} nodes`);
+      if (totalPods != null) statsParts.push(`${totalPods} pods`);
+      if (warningCount > 0) {
+        statsParts.push(`<span class="cluster-warning">${warningCount} ⚠</span>`);
+      }
+      const statsHtml = statsParts.length
+        ? `<div class="cluster-meta-line">${statsParts.join('  |  ')}</div>`
+        : '';
+
+      const shortName = getClusterShortName(c.name);
+      return `
+        <div class="cluster-item ${isActive ? 'active' : ''}" data-cluster="${escapeAttr(c.name)}" title="${escapeAttr(c.name)}">
+          <span class="status-dot ${c.is_healthy ? 'healthy' : 'stale'}"></span>
+          <span class="short-name">${escapeHtml(shortName)}</span>
+          <span class="name">${escapeHtml(c.name)}</span>
+          <span class="cluster-actions">
+            <span class="ago">${formatAgeShort(c.last_seen)}</span>
+            <button class="btn-delete" type="button" title="Delete cluster" aria-label="Delete cluster">🗑</button>
+          </span>
+          ${statsHtml}
+        </div>
+      `;
+    }
+
+    function renderClusterSidebar() {
+      const listEl = el('clusterList');
+      const emptyEl = el('sidebarEmpty');
+      if (!clustersList.length) {
+        listEl.innerHTML = '';
+        emptyEl.style.display = 'block';
+        el('clustersBadge').textContent = '0 clusters';
+        return;
+      }
+      emptyEl.style.display = 'none';
+      const healthy = clustersList.filter(c => c.is_healthy).length;
+      el('clustersBadge').textContent = healthy + '/' + clustersList.length + ' clusters';
+      el('clustersBadge').className = 'clusters-badge ' + (healthy > 0 ? 'healthy' : '');
+      listEl.innerHTML = clustersList.map(c => renderClusterSidebarItem(c)).join('');
+      // Clicking the row selects a cluster; the delete button is handled separately.
+      qsa('.cluster-item').forEach(item => item.addEventListener('click', () => selectCluster(item.dataset.cluster)));
+      qsa('.cluster-item .btn-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const item = btn.closest('.cluster-item');
+          if (!item) return;
+          showInlineDeleteConfirm(item);
+        });
+      });
+    }
+
+    function escapeAttr(s) {
+      if (s == null) return '';
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML.replace(/"/g, '&quot;');
+    }
+    function escapeHtml(s) {
+      if (s == null) return '';
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function selectCluster(name) {
+      selectedCluster = name;
+      renderClusterSidebar();
+      el('pageCluster').style.display = 'block';
+      el('pageClusterPlaceholder').style.display = 'none';
+      qsa('.main-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.page === 'cluster');
+      });
+      // Expanded rows are per-table; switching clusters should collapse them.
+      collapseAllExpanded();
+      fetchClusterData();
+    }
+
+    function showPlaceholderPage() {
+      selectedCluster = null;
+      el('pageCluster').style.display = 'none';
+      el('pageAdd').style.display = 'none';
+      el('pageClusterPlaceholder').style.display = 'block';
+      renderClusterSidebar();
+      collapseAllExpanded();
+    }
+
+    function showInlineDeleteConfirm(clusterItemEl) {
+      // Only one inline confirmation at a time in the sidebar.
+      qsa('.cluster-item .delete-confirm').forEach(x => x.remove());
+      qsa('.cluster-item .delete-error').forEach(x => x.remove());
+
+      const name = clusterItemEl.dataset.cluster || '';
+      const confirm = document.createElement('div');
+      confirm.className = 'delete-confirm';
+      confirm.innerHTML = `
+        <span>Delete '${escapeHtml(name)}'?</span>
+        <button type="button" class="danger" data-action="yes">Yes</button>
+        <button type="button" data-action="cancel">Cancel</button>
+      `;
+      clusterItemEl.appendChild(confirm);
+
+      confirm.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        e.preventDefault();
+        const action = btn.dataset.action;
+        if (action === 'cancel') {
+          confirm.remove();
+          return;
+        }
+        if (action !== 'yes') return;
+
+        try {
+          const r = await fetch('/api/cluster/' + encodeURIComponent(name), {
+            method: 'DELETE',
+            headers: { 'X-Admin-Key': adminKey || '' },
+          });
+          if (r.status === 401) {
+            showInlineDeleteError(clusterItemEl, 'Wrong admin key');
+            return;
+          }
+          if (r.status === 404) {
+            await fetchClusters();
+            if (selectedCluster === name) showPlaceholderPage();
+            return;
+          }
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}));
+            showInlineDeleteError(clusterItemEl, data.error || 'Delete failed');
+            return;
+          }
+          clustersList = clustersList.filter(c => c.name !== name);
+          if (selectedCluster === name) showPlaceholderPage();
+          renderClusterSidebar();
+        } catch (err) {
+          showInlineDeleteError(clusterItemEl, err.message || 'Delete failed');
+        }
+      });
+    }
+
+    function showInlineDeleteError(clusterItemEl, msg) {
+      qsa('.cluster-item .delete-error').forEach(x => x.remove());
+      const err = document.createElement('div');
+      err.className = 'delete-error';
+      err.textContent = msg;
+      clusterItemEl.appendChild(err);
+    }
+
+    function showAddClusterPage() {
+      selectedCluster = null;
+      renderClusterSidebar();
+      el('pageCluster').style.display = 'none';
+      el('pageClusterPlaceholder').style.display = 'none';
+      el('pageAdd').style.display = 'block';
+      qsa('.main-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.page === 'add');
+      });
+    }
+
+    function showClusterPage() {
+      if (selectedCluster) {
+        el('pageCluster').style.display = 'block';
+        el('pageClusterPlaceholder').style.display = 'none';
+      } else {
+        el('pageCluster').style.display = 'none';
+        el('pageClusterPlaceholder').style.display = 'block';
+      }
+      el('pageAdd').style.display = 'none';
+    }
+
+    async function fetchClusters() {
+      try {
+        const r = await fetch('/api/clusters');
+        if (r.ok) {
+          clustersList = await r.json();
+          renderClusterSidebar();
+          if (selectedCluster && !clustersList.find(c => c.name === selectedCluster)) {
+            selectedCluster = clustersList.length ? clustersList[0].name : null;
+            if (selectedCluster) fetchClusterData();
+          }
+        }
+      } catch (e) {
+        console.warn('fetchClusters failed', e);
+      }
+    }
+
+    function renderSummary(data) {
+      const row = el('summaryRow');
+      if (!row) return;
+      if (!data || data.error) {
+        row.innerHTML = '<div class="card"><span class="value">—</span><div class="label">Summary unavailable</div></div>';
+        return;
+      }
+      const cards = [
+        {
+          label: 'Nodes',
+          value: (data.readyNodes != null && data.totalNodes != null)
+            ? (data.readyNodes + '/' + data.totalNodes)
+            : '—',
+          cls: (data.readyNodes != null && data.totalNodes != null && data.readyNodes < data.totalNodes) ? 'warn' : 'ok',
+        },
+        { label: 'Total Pods', value: data.totalPods, cls: '' },
+        { label: 'Running Pods', value: data.runningPods, cls: 'ok' },
+        { label: 'Pending Pods', value: data.pendingPods, cls: data.pendingPods > 0 ? 'warn' : '' },
+        { label: 'Failed Pods', value: data.failedPods, cls: data.failedPods > 0 ? 'error' : '' },
+        {
+          label: 'Deployments',
+          value: (data.healthyDeployments != null && data.totalDeployments != null)
+            ? (data.healthyDeployments + '/' + data.totalDeployments)
+            : '—',
+          cls: (data.healthyDeployments != null && data.totalDeployments != null && data.healthyDeployments < data.totalDeployments && data.totalDeployments > 0) ? 'warn' : '',
+        },
+        { label: 'Total Services', value: data.totalServices, cls: '' },
+      ];
+      const cardsHtml = cards.map(c => `
+        <div class="card ${c.cls}">
+          <span class="value">${c.value != null ? c.value : '—'}</span>
+          <div class="label">${c.label}</div>
+        </div>
+      `).join('');
+      const noteHtml = hideSystemNamespaces
+        ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:-12px; margin-bottom:16px;">
+      ℹ System namespaces hidden — counts above include all namespaces. Toggle to show system resources in tables.
+    </div>`
+        : '';
+      row.innerHTML = cardsHtml + noteHtml;
+    }
+
+    // -----------------------------
+    // Global namespace/label filters
+    // -----------------------------
+    function renderGlobalFilterBar() {
+      const host = el('globalFilterBar');
+      if (!host) return;
+      if (!selectedCluster) {
+        host.style.display = 'none';
+        host.innerHTML = '';
+        return;
+      }
+
+      // Namespace options are derived from the current cluster data and refreshed each poll.
+      const nsSet = new Set();
+      ['pods', 'deployments', 'services', 'ingresses', 'configmaps'].forEach(k => {
+        const items = (_cache[k] && _cache[k].items) ? _cache[k].items : [];
+        items.forEach(it => {
+          if (it && it.namespace) {
+            if (!hideSystemNamespaces || !SYSTEM_NAMESPACES.has(it.namespace)) {
+              nsSet.add(it.namespace);
+            }
+          }
+        });
+      });
+      const namespaces = Array.from(nsSet).sort((a, b) => a.localeCompare(b));
+      if (selectedNamespace !== 'all' && !nsSet.has(selectedNamespace)) selectedNamespace = 'all';
+
+      const optionsHtml = ['<option value="all">All Namespaces</option>']
+        .concat(namespaces.map(ns => `<option value="${escapeAttr(ns)}">${escapeHtml(ns)}</option>`))
+        .join('');
+
+      const hasFilters = (selectedNamespace !== 'all') || Boolean((labelFilter || '').trim());
+      host.style.display = 'block';
+      host.innerHTML = `
+        <div class="filter-bar ${hasFilters ? 'has-filters' : ''}">
+          <span class="label">Namespace</span>
+          <select id="globalNamespace">${optionsHtml}</select>
+          <input id="globalLabelFilter" class="filter-input-inline" type="text" placeholder="Filter by label e.g. app=nginx" />
+          <button id="btnClearFilters" class="btn-clear" type="button">Clear Filters</button>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.8rem; color:var(--text-muted); margin-left:auto; user-select:none;">
+            <div class="toggle-switch" id="systemNsToggle">
+              <input type="checkbox" id="systemNsCheckbox" ${hideSystemNamespaces ? 'checked' : ''} />
+              <span class="toggle-slider"></span>
+            </div>
+            Hide system namespaces
+          </label>
+        </div>
+      `;
+
+      const nsEl = el('globalNamespace');
+      if (nsEl) nsEl.value = selectedNamespace;
+      const lblEl = el('globalLabelFilter');
+      if (lblEl) lblEl.value = labelFilter;
+
+      if (nsEl) nsEl.addEventListener('change', () => {
+        selectedNamespace = nsEl.value || 'all';
+        collapseAllExpanded();
+        TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
+        renderGlobalFilterBar();
+      });
+      if (lblEl) {
+        lblEl.addEventListener('input', () => {
+          labelFilter = (lblEl.value || '').trim();
+          collapseAllExpanded();
+          TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
+          renderGlobalFilterBar();
+        });
+        lblEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') e.preventDefault();
+        });
+      }
+      const clearBtn = el('btnClearFilters');
+      if (clearBtn) clearBtn.addEventListener('click', () => {
+        selectedNamespace = 'all';
+        labelFilter = '';
+        collapseAllExpanded();
+        TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
+        renderGlobalFilterBar();
+      });
+      const sysChk = el('systemNsCheckbox');
+      if (sysChk) {
+        sysChk.addEventListener('change', () => {
+          hideSystemNamespaces = sysChk.checked;
+          try {
+            localStorage.setItem('hideSystemNamespaces', hideSystemNamespaces ? 'true' : 'false');
+          } catch (e) {}
+          collapseAllExpanded();
+          TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
+          renderGlobalFilterBar();
+        });
+      }
+    }
+
+    function parseLabelFilter(s) {
+      const v = (s || '').trim();
+      if (!v) return null;
+      const idx = v.indexOf('=');
+      if (idx <= 0 || idx === v.length - 1) return null;
+      return { key: v.slice(0, idx).trim(), value: v.slice(idx + 1).trim() };
+    }
+
+    function matchesGlobalFilters(resource, { useNamespace = true, useLabels = true } = {}) {
+      // System namespace filter — applies regardless of useNamespace flag
+      if (hideSystemNamespaces && resource && resource.namespace) {
+        if (SYSTEM_NAMESPACES.has(resource.namespace)) return false;
+      }
+
+      // Namespace dropdown filter
+      if (useNamespace && selectedNamespace !== 'all') {
+        if (!resource || resource.namespace !== selectedNamespace) return false;
+      }
+
+      // Label filter
+      const lf = useLabels ? parseLabelFilter(labelFilter) : null;
+      if (!lf) return true;
+      const labels = (resource && resource.labels && typeof resource.labels === 'object') ? resource.labels
+        : (resource && resource.selector && typeof resource.selector === 'object') ? resource.selector
+        : null;
+      if (!labels) return false;
+      return String(labels[lf.key] ?? '') === lf.value;
+    }
+
+    // -----------------------------
+    // Tags / formatting helpers
+    // -----------------------------
+    function shortImageName(image) {
+      const s = String(image || '');
+      if (!s) return '';
+      if (s.includes('@sha256:')) return 'img@sha';
+      const last = s.split('/').pop() || s;
+      return last;
+    }
+
+    function renderTagsFromDict(d, { max = null, expandable = false, expandId = '' } = {}) {
+      const obj = (d && typeof d === 'object') ? d : {};
+      const entries = Object.entries(obj);
+      if (!entries.length) return '';
+      const shown = (max != null) ? entries.slice(0, max) : entries;
+      const more = entries.length - shown.length;
+      const tags = shown.map(([k, v]) => `<span class="tag">${escapeHtml(k)}=${escapeHtml(String(v))}</span>`).join('');
+      if (!expandable || more <= 0) return tags;
+      return tags + `<span class="tag tag-muted" data-expand="${escapeAttr(expandId)}">+${more} more</span>`;
+    }
+
+    function renderRemainingTagsFromDict(d, startIndex) {
+      const obj = (d && typeof d === 'object') ? d : {};
+      const entries = Object.entries(obj);
+      const rest = entries.slice(startIndex || 0);
+      if (!rest.length) return '';
+      return rest.map(([k, v]) => `<span class="tag">${escapeHtml(k)}=${escapeHtml(String(v))}</span>`).join('');
+    }
+
+    // -----------------------------
+    // Expandable rows (one open per table)
+    // -----------------------------
+    const expandedByTab = {};
+    function collapseAllExpanded() {
+      Object.keys(expandedByTab).forEach(tabId => collapseExpanded(tabId));
+    }
+    function collapseExpanded(tabId) {
+      const rowId = expandedByTab[tabId];
+      if (!rowId) return;
+      const panel = el('tab-' + tabId);
+      if (!panel) return;
+      const main = panel.querySelector(`tr[data-rowid="${CSS.escape(rowId)}"]`);
+      const detail = panel.querySelector(`tr[data-detailfor="${CSS.escape(rowId)}"]`);
+      if (main) main.classList.remove('expanded');
+      if (detail) detail.classList.remove('open');
+      expandedByTab[tabId] = null;
+    }
+
+    // Open a specific row in a tab by its rowId and optionally scroll it into view.
+    function openRowById(tabId, rowId, opts = {}) {
+      const panel = el('tab-' + tabId);
+      if (!panel || !rowId) return;
+      const main = panel.querySelector(`tr[data-rowid="${CSS.escape(rowId)}"]`);
+      const detail = panel.querySelector(`tr[data-detailfor="${CSS.escape(rowId)}"]`);
+      if (!main || !detail) return;
+      if (expandedByTab[tabId] && expandedByTab[tabId] !== rowId) {
+        collapseExpanded(tabId);
+      }
+      main.classList.add('expanded');
+      detail.classList.add('open');
+      expandedByTab[tabId] = rowId;
+      if (opts.scroll) {
+        main.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    // Global cross-link helper: switch tab and expand a specific resource row.
+    function jumpTo(tabId, resourceName, namespace) {
+      if (!selectedCluster) return;
+
+      // If namespace-only navigation from namespace detail, update global filter.
+      if (!resourceName && namespace && tabId === 'pods') {
+        selectedNamespace = namespace;
+      }
+
+      // Show main cluster page.
+      showClusterPage();
+      qsa('.main-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.page === 'cluster');
+      });
+
+      // Switch resource tab.
+      const tabButton = qs(`.tab[data-tab="${CSS.escape(tabId)}"]`);
+      qsa('.tab').forEach(b => b.classList.remove('active'));
+      qsa('.tab-panel').forEach(p => p.classList.remove('active'));
+      if (tabButton) tabButton.classList.add('active');
+      const activePanel = el('tab-' + tabId);
+      if (activePanel) activePanel.classList.add('active');
+
+      // Re-render tables if filters changed (or to ensure fresh handlers).
+      renderGlobalFilterBar();
+      TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
+
+      // If only changing filters / tab (no specific resource row), we are done.
+      if (!resourceName) return;
+
+      const panel = el('tab-' + tabId);
+      const tbody = panel ? panel.querySelector('tbody') : null;
+      if (!tbody) return;
+      let selector = `tr[data-name="${CSS.escape(resourceName)}"]`;
+      if (namespace) {
+        selector += `[data-namespace="${CSS.escape(namespace)}"]`;
+      }
+      const row = tbody.querySelector(selector);
+      if (!row) return;
+      const rowId = row.dataset.rowid;
+      if (!rowId) return;
+      openRowById(tabId, rowId, { scroll: true });
+    }
+    // Expose for inline handlers if needed.
+    window.jumpTo = jumpTo;
+
+    function attachExpandableRows(tabId) {
+      const panel = el('tab-' + tabId);
+      if (!panel) return;
+      const tbody = panel.querySelector('tbody');
+      if (!tbody) return;
+      if (tbody.dataset.expandBound === '1') return; // already bound for this render
+      tbody.dataset.expandBound = '1';
+
+      tbody.addEventListener('click', (e) => {
+        const tr = e.target.closest('tr');
+        if (!tr) return;
+        if (tr.classList.contains('detail-row')) return;
+
+        const rowId = tr.dataset.rowid;
+        if (!rowId) return;
+
+        const detail = panel.querySelector(`tr[data-detailfor="${CSS.escape(rowId)}"]`);
+        const isOpen = detail && detail.classList.contains('open');
+        if (isOpen) {
+          tr.classList.remove('expanded');
+          detail.classList.remove('open');
+          expandedByTab[tabId] = null;
+        } else {
+          openRowById(tabId, rowId, { scroll: false });
+        }
+      });
+
+      // Copy-to-clipboard for elements inside detail panels.
+      tbody.querySelectorAll('.copyable[data-copy]').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const v = a.getAttribute('data-copy') || '';
+          if (!v || !navigator.clipboard) return;
+          navigator.clipboard.writeText(v).then(() => {
+            const old = a.textContent;
+            a.textContent = 'Copied!';
+            setTimeout(() => { a.textContent = old; }, 900);
+          }).catch(() => {});
+        });
+      });
+
+      // Copy buttons for short ConfigMap values.
+      tbody.querySelectorAll('button[data-copy-value]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const v = btn.getAttribute('data-copy-value') || '';
+          if (!v || !navigator.clipboard) return;
+          navigator.clipboard.writeText(v).then(() => {
+            const old = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = old; }, 900);
+          }).catch(() => {});
+        });
+      });
+
+      // "+N more" expansion in tag cells.
+      tbody.querySelectorAll('[data-expand]').forEach(badge => {
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const expandId = badge.getAttribute('data-expand');
+          if (!expandId) return;
+          const full = tbody.querySelector(`[data-fulltags="${CSS.escape(expandId)}"]`);
+          if (!full) return;
+          full.style.display = 'inline';
+          badge.remove();
+        });
+      });
+
+      // Cross-link elements (nodes, pods, deployments, namespaces) inside detail panels.
+      tbody.querySelectorAll('.link-node[data-node]').forEach(elm => {
+        elm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const node = elm.getAttribute('data-node');
+          if (node) jumpTo('nodes', node, null);
+        });
+      });
+      tbody.querySelectorAll('.link-pod[data-pod][data-namespace]').forEach(elm => {
+        elm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const pod = elm.getAttribute('data-pod');
+          const ns = elm.getAttribute('data-namespace');
+          if (pod && ns) jumpTo('pods', pod, ns);
+        });
+      });
+      tbody.querySelectorAll('.link-deployment[data-deployment][data-namespace]').forEach(elm => {
+        elm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const dep = elm.getAttribute('data-deployment');
+          const ns = elm.getAttribute('data-namespace');
+          if (dep && ns) jumpTo('deployments', dep, ns);
+        });
+      });
+      tbody.querySelectorAll('.link-namespace-pods[data-namespace]').forEach(elm => {
+        elm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const ns = elm.getAttribute('data-namespace');
+          if (!ns) return;
+          // Namespace detail wants to jump to Pods tab filtered to this namespace.
+          jumpTo('pods', null, ns);
+        });
+      });
+    }
+
+    function buildTable(headers, rows, rowHtml) {
+      const thead = headers.map((h, idx) => {
+        const cls = idx === 0 ? ' class="chev-col"' : '';
+        return `<th${cls}>${h}</th>`;
+      }).join('');
+      let tbody = rows.map(r => rowHtml(r)).join('');
+      if (!rows.length) {
+        tbody = `<tr><td colspan="${headers.length}" style="text-align:center; color: var(--text-muted); padding: 24px;">No results match your filters</td></tr>`;
+      }
+      return `<div class="table-wrap"><table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></div>`;
+    }
+
+    function nsFilteredPods() {
+      const items = (_cache.pods && _cache.pods.items) ? _cache.pods.items : [];
+      if (!hideSystemNamespaces) return items;
+      return items.filter(p => !SYSTEM_NAMESPACES.has(p.namespace));
+    }
+
+    function nsFilteredDeployments() {
+      const items = (_cache.deployments && _cache.deployments.items) ? _cache.deployments.items : [];
+      if (!hideSystemNamespaces) return items;
+      return items.filter(d => !SYSTEM_NAMESPACES.has(d.namespace));
+    }
+
+    function renderHBarChart(rows, maxVal) {
+      if (!rows.length) return '<div class="chart-empty">No data</div>';
+      return rows.map(r => {
+        const pct = maxVal > 0 ? Math.min(100, (r.value / maxVal) * 100) : 0;
+        const fillClass = r.color || 'bar-fill-accent';
+        return `
+        <div class="bar-row">
+          <div class="bar-label" title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</div>
+          <div class="bar-track">
+            <div class="bar-fill ${fillClass}" style="width:${pct.toFixed(1)}%;"></div>
+          </div>
+          <div class="bar-value">${escapeHtml(r.displayValue || String(r.value))}</div>
+        </div>
+      `;
+      }).join('');
+    }
+
+    function renderDonutSVG(segments) {
+      const total = segments.reduce((s, seg) => s + seg.value, 0);
+      if (total === 0) return '<div class="chart-empty">No data</div>';
+      const cx = 80, cy = 80, r = 60, stroke = 22;
+      const circumference = 2 * Math.PI * r;
+      let offset = 0;
+      const arcs = segments.map(seg => {
+        const pct = seg.value / total;
+        const dash = pct * circumference;
+        const arc = `<circle
+        cx="${cx}" cy="${cy}" r="${r}"
+        fill="none"
+        stroke="${seg.color}"
+        stroke-width="${stroke}"
+        stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}"
+        stroke-dashoffset="${(-offset).toFixed(2)}"
+        transform="rotate(-90 ${cx} ${cy})"
+      />`;
+        offset += dash;
+        return arc;
+      }).join('');
+      const legendHtml = segments.map(seg => `
+      <div class="donut-legend-item">
+        <div class="donut-legend-dot" style="background:${seg.color};"></div>
+        <span>${escapeHtml(seg.label)}: ${escapeHtml(String(seg.value))}</span>
+      </div>
+    `).join('');
+      return `
+      <div style="display:flex; flex-direction:column; align-items:center;">
+        <svg width="160" height="160" viewBox="0 0 160 160">
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" 
+            stroke="var(--border)" stroke-width="${stroke}"/>
+          ${arcs}
+          <text x="${cx}" y="${cy}" text-anchor="middle" dy="0.35em"
+            fill="var(--text)" font-size="18" font-weight="bold">${total}</text>
+        </svg>
+        <div class="donut-legend">${legendHtml}</div>
+      </div>
+    `;
+    }
+
+    function renderGraphsTab() {
+      const podsAll = (_cache.pods && Array.isArray(_cache.pods.items)) ? _cache.pods.items : [];
+      const pods = nsFilteredPods();
+      const deployments = nsFilteredDeployments();
+
+      const byNsPodCount = {};
+      pods.forEach(p => {
+        const ns = p.namespace || 'default';
+        byNsPodCount[ns] = (byNsPodCount[ns] || 0) + 1;
+      });
+      const podRows = Object.entries(byNsPodCount)
+        .map(([ns, count]) => ({ label: ns, value: count, displayValue: `${count} pod${count === 1 ? '' : 's'}` }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 15);
+      const podMax = podRows.length ? podRows[0].value : 0;
+
+      const byNsCpu = {};
+      pods.forEach(p => {
+        const ns = p.namespace || 'default';
+        if (!byNsCpu[ns]) byNsCpu[ns] = { used: 0, req: 0, lim: 0 };
+        if (p.cpuUsage) {
+          const s = String(p.cpuUsage).trim();
+          let usedMillis = null;
+          if (s.endsWith('n')) {
+            usedMillis = parseFloat(s.slice(0, -1)) / 1e6;
+          } else {
+            usedMillis = cpuToMillis(s);
+          }
+          if (Number.isFinite(usedMillis)) byNsCpu[ns].used += usedMillis;
+        }
+        const req = cpuToMillis(p.cpuRequest);
+        if (Number.isFinite(req)) byNsCpu[ns].req += req || 0;
+        const lim = cpuToMillis(p.cpuLimit);
+        if (Number.isFinite(lim)) byNsCpu[ns].lim += lim || 0;
+      });
+      const cpuNsEntries = Object.entries(byNsCpu).map(([ns, v]) => {
+        const usedCores = v.used / 1000;
+        const reqCores = v.req / 1000;
+        const limCores = v.lim / 1000;
+        return {
+          ns,
+          used: v.used,
+          req: v.req,
+          lim: v.lim,
+          label: ns,
+          displayValue: `${usedCores.toFixed(2)} cores used / ${reqCores ? reqCores.toFixed(2) : '—'} cores req / ${limCores ? limCores.toFixed(2) : '—'} cores lim`,
+        };
+      }).sort((a, b) => b.used - a.used);
+      const cpuMax = cpuNsEntries.reduce((m, r) => Math.max(m, r.used, r.req, r.lim), 0);
+
+      const byNsMem = {};
+      pods.forEach(p => {
+        const ns = p.namespace || 'default';
+        if (!byNsMem[ns]) byNsMem[ns] = { used: 0, req: 0, lim: 0 };
+        const used = memoryToBytes(p.memoryUsage);
+        if (Number.isFinite(used)) byNsMem[ns].used += used || 0;
+        const req = memoryToBytes(p.memoryRequest);
+        if (Number.isFinite(req)) byNsMem[ns].req += req || 0;
+        const lim = memoryToBytes(p.memoryLimit);
+        if (Number.isFinite(lim)) byNsMem[ns].lim += lim || 0;
+      });
+      const memNsEntries = Object.entries(byNsMem).map(([ns, v]) => {
+        const usedGB = v.used / (1024 ** 3);
+        const reqGB = v.req / (1024 ** 3);
+        const limGB = v.lim / (1024 ** 3);
+        const fmt = (x) => x ? (x >= 1 ? x.toFixed(2) + ' GB' : (x * 1024).toFixed(0) + ' MB') : '—';
+        return {
+          ns,
+          used: v.used,
+          req: v.req,
+          lim: v.lim,
+          label: ns,
+          displayValue: `${fmt(usedGB)} used / ${fmt(reqGB)} req / ${fmt(limGB)} lim`,
+        };
+      }).sort((a, b) => b.used - a.used);
+      const memMax = memNsEntries.reduce((m, r) => Math.max(m, r.used, r.req, r.lim), 0);
+
+      const byNsRestarts = {};
+      pods.forEach(p => {
+        const ns = p.namespace || 'default';
+        byNsRestarts[ns] = (byNsRestarts[ns] || 0) + (p.restartCount || 0);
+      });
+      const restartRows = Object.entries(byNsRestarts).map(([ns, count]) => {
+        let color = 'bar-fill-green';
+        if (count > 5) color = 'bar-fill-red';
+        else if (count >= 1) color = 'bar-fill-yellow';
+        return {
+          label: ns,
+          value: count,
+          displayValue: `${count} restart${count === 1 ? '' : 's'}`,
+          color,
+        };
+      }).sort((a, b) => b.value - a.value).slice(0, 15);
+      const restartMax = restartRows.length ? restartRows[0].value : 0;
+
+      let running = 0, pending = 0, failed = 0, other = 0;
+      pods.forEach(p => {
+        const v = (p.status || '').toLowerCase();
+        if (v === 'running') running++;
+        else if (v === 'pending') pending++;
+        else if (v === 'failed' || v === 'error') failed++;
+        else other++;
+      });
+      const donutSegments = [
+        { label: 'Running', value: running, color: 'var(--green)' },
+        { label: 'Pending', value: pending, color: 'var(--yellow)' },
+        { label: 'Failed', value: failed, color: 'var(--red)' },
+        { label: 'Other', value: other, color: 'var(--text-muted)' },
+      ].filter(seg => seg.value > 0);
+
+      const byNsDep = {};
+      deployments.forEach(d => {
+        const ns = d.namespace || 'default';
+        if (!byNsDep[ns]) byNsDep[ns] = { ready: 0, desired: 0 };
+        byNsDep[ns].ready += d.readyReplicas ?? 0;
+        byNsDep[ns].desired += d.desiredReplicas ?? 0;
+      });
+      const depRows = Object.entries(byNsDep).map(([ns, v]) => {
+        const desired = v.desired || 0;
+        const ready = v.ready || 0;
+        let color = 'bar-fill-muted';
+        if (desired > 0) {
+          if (ready === desired) color = 'bar-fill-green';
+          else if (ready === 0) color = 'bar-fill-red';
+          else color = 'bar-fill-yellow';
+        }
+        const ratio = desired > 0 ? ready / desired : 0;
+        return {
+          label: ns,
+          value: ratio,
+          displayValue: `${ready}/${desired} ready`,
+          color,
+        };
+      }).sort((a, b) => b.value - a.value);
+      const depMax = 1;
+
+      let totalCpuReq = 0, totalCpuLim = 0, totalMemReq = 0, totalMemLim = 0;
+      pods.forEach(p => {
+        const cpuReq = cpuToMillis(p.cpuRequest);
+        if (Number.isFinite(cpuReq)) totalCpuReq += cpuReq || 0;
+        const cpuLim = cpuToMillis(p.cpuLimit);
+        if (Number.isFinite(cpuLim)) totalCpuLim += cpuLim || 0;
+        const memReq = memoryToBytes(p.memoryRequest);
+        if (Number.isFinite(memReq)) totalMemReq += memReq || 0;
+        const memLim = memoryToBytes(p.memoryLimit);
+        if (Number.isFinite(memLim)) totalMemLim += memLim || 0;
+      });
+      const cpuMaxTotal = Math.max(totalCpuReq, totalCpuLim);
+      const memMaxTotal = Math.max(totalMemReq, totalMemLim);
+
+      function fmtCores(millis) {
+        const cores = millis / 1000;
+        if (!cores) return '0 cores';
+        return cores >= 1 ? cores.toFixed(2) + ' cores' : Math.round(cores * 1000) + 'm';
+      }
+      function fmtBytesHuman(bytes) {
+        if (!bytes) return '0 GB';
+        const gb = bytes / (1024 ** 3);
+        if (gb >= 1) return gb.toFixed(2) + ' GB';
+        const mb = bytes / (1024 ** 2);
+        return mb.toFixed(0) + ' MB';
+      }
+
+      const topCpuPods = podsAll
+        .map(p => {
+          let usedMillis = null;
+          if (p.cpuUsage) {
+            const s = String(p.cpuUsage).trim();
+            if (s.endsWith('n')) {
+              usedMillis = parseFloat(s.slice(0, -1)) / 1e6;
+            } else {
+              usedMillis = cpuToMillis(s);
+            }
+          }
+          if (!Number.isFinite(usedMillis)) return null;
+          const lim = cpuToMillis(p.cpuLimit);
+          const req = cpuToMillis(p.cpuRequest);
+          const baseline = lim || req || null;
+          const pctOfLimit = baseline ? (usedMillis / baseline) * 100 : null;
+          let color = 'bar-fill-accent';
+          if (pctOfLimit != null) {
+            if (pctOfLimit > 80) color = 'bar-fill-red';
+            else if (pctOfLimit > 60) color = 'bar-fill-yellow';
+          }
+          const labelName = String(p.name || '');
+          const shortName = labelName.length > 24 ? labelName.slice(0, 21) + '…' : labelName;
+          const display = `${fmtCores(usedMillis)}${pctOfLimit != null ? ` (${Math.round(pctOfLimit)}% of lim/req)` : ''}`;
+          return {
+            pod: p,
+            value: usedMillis,
+            label: `${shortName} (${p.namespace || ''})`,
+            displayValue: display,
+            color,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
+      const topCpuMax = topCpuPods.reduce((m, r) => Math.max(m, r.value), 0);
+
+      const topMemPods = podsAll
+        .map(p => {
+          const used = memoryToBytes(p.memoryUsage);
+          if (!Number.isFinite(used)) return null;
+          const lim = memoryToBytes(p.memoryLimit);
+          const req = memoryToBytes(p.memoryRequest);
+          const baseline = lim || req || null;
+          const pctOfLimit = baseline ? (used / baseline) * 100 : null;
+          let color = 'bar-fill-accent';
+          if (pctOfLimit != null) {
+            if (pctOfLimit > 80) color = 'bar-fill-red';
+            else if (pctOfLimit > 60) color = 'bar-fill-yellow';
+          }
+          const labelName = String(p.name || '');
+          const shortName = labelName.length > 24 ? labelName.slice(0, 21) + '…' : labelName;
+          const display = `${fmtBytesHuman(used)}${pctOfLimit != null ? ` (${Math.round(pctOfLimit)}% of lim/req)` : ''}`;
+          return {
+            pod: p,
+            value: used,
+            label: `${shortName} (${p.namespace || ''})`,
+            displayValue: display,
+            color,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
+      const topMemMax = topMemPods.reduce((m, r) => Math.max(m, r.value), 0);
+
+      const html = `
+      <div class="graphs-header">
+        <h2>Graphs by namespace</h2>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(440px,1fr)); gap:24px; padding:4px;">
+        <div class="chart-card">
+          <h3>Pod Count by Namespace</h3>
+          <div class="chart-subtitle">Top namespaces by running pods</div>
+          ${renderHBarChart(podRows, podMax)}
+        </div>
+        <div class="chart-card">
+          <h3>CPU Usage by Namespace</h3>
+          <div class="chart-subtitle">Aggregated pod CPU usage vs requests and limits</div>
+          ${cpuNsEntries.length ? cpuNsEntries.map(r => {
+            const pctUsed = cpuMax > 0 ? Math.min(100, (r.used / cpuMax) * 100) : 0;
+            const pctReq = cpuMax > 0 ? Math.min(100, (r.req / cpuMax) * 100) : 0;
+            const pctLim = cpuMax > 0 ? Math.min(100, (r.lim / cpuMax) * 100) : 0;
+            return `
+            <div class="bar-row">
+              <div class="bar-label" title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</div>
+              <div class="bar-track">
+                ${pctLim > 0 ? `<div class="bar-fill bar-fill-muted" style="width:${pctLim.toFixed(1)}%; border-top:1px dashed var(--text-muted); border-bottom:1px dashed var(--text-muted); background:transparent;"></div>` : ''}
+                ${pctReq > 0 ? `<div class="bar-fill bar-fill-accent" style="width:${pctReq.toFixed(1)}%; opacity:0.3; border:1px solid var(--accent); background:transparent;"></div>` : ''}
+                ${pctUsed > 0 ? `<div class="bar-fill bar-fill-accent" style="width:${pctUsed.toFixed(1)}%;"></div>` : ''}
+              </div>
+              <div class="bar-value">${escapeHtml(r.displayValue)}</div>
+            </div>
+          `;
+          }).join('') : '<div class="chart-empty">No data</div>'}
+        </div>
+        <div class="chart-card">
+          <h3>Memory Usage by Namespace</h3>
+          <div class="chart-subtitle">Aggregated pod memory usage vs requests and limits</div>
+          ${memNsEntries.length ? memNsEntries.map(r => {
+            const pctUsed = memMax > 0 ? Math.min(100, (r.used / memMax) * 100) : 0;
+            const pctReq = memMax > 0 ? Math.min(100, (r.req / memMax) * 100) : 0;
+            const pctLim = memMax > 0 ? Math.min(100, (r.lim / memMax) * 100) : 0;
+            return `
+            <div class="bar-row">
+              <div class="bar-label" title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</div>
+              <div class="bar-track">
+                ${pctLim > 0 ? `<div class="bar-fill bar-fill-muted" style="width:${pctLim.toFixed(1)}%; border-top:1px dashed var(--text-muted); border-bottom:1px dashed var(--text-muted); background:transparent;"></div>` : ''}
+                ${pctReq > 0 ? `<div class="bar-fill bar-fill-accent" style="width:${pctReq.toFixed(1)}%; opacity:0.3; border:1px solid var(--accent); background:transparent;"></div>` : ''}
+                ${pctUsed > 0 ? `<div class="bar-fill bar-fill-accent" style="width:${pctUsed.toFixed(1)}%;"></div>` : ''}
+              </div>
+              <div class="bar-value">${escapeHtml(r.displayValue)}</div>
+            </div>
+          `;
+          }).join('') : '<div class="chart-empty">No data</div>'}
+        </div>
+        <div class="chart-card">
+          <h3>Restart Count by Namespace</h3>
+          <div class="chart-subtitle">Namespaces with pods restarting frequently</div>
+          ${renderHBarChart(restartRows, restartMax)}
+        </div>
+        <div class="chart-card">
+          <h3>Pod Status Distribution</h3>
+          <div class="chart-subtitle">Running vs Pending vs Failed pods</div>
+          ${renderDonutSVG(donutSegments)}
+        </div>
+        <div class="chart-card">
+          <h3>Deployment Health by Namespace</h3>
+          <div class="chart-subtitle">Ready vs desired replicas</div>
+          ${renderHBarChart(depRows, depMax)}
+        </div>
+        <div class="chart-card">
+          <h3>Resource Requests vs Limits (Cluster)</h3>
+          <div class="chart-subtitle">Cluster-wide CPU and memory reservations</div>
+          <div class="bar-row">
+            <div class="bar-label">CPU</div>
+            <div class="bar-track">
+              ${cpuMaxTotal > 0 ? `
+              <div class="bar-fill bar-fill-muted" style="width:100%; opacity:0.25;"></div>
+              <div class="bar-fill bar-fill-accent" style="width:${cpuMaxTotal ? Math.min(100, (totalCpuReq / cpuMaxTotal) * 100).toFixed(1) : 0}%; opacity:0.4;"></div>
+              <div class="bar-fill bar-fill-green" style="width:${cpuMaxTotal ? Math.min(100, (totalCpuLim / cpuMaxTotal) * 100).toFixed(1) : 0}%;"></div>
+              ` : ''}
+            </div>
+            <div class="bar-value">${escapeHtml(`${fmtCores(totalCpuReq)} req / ${fmtCores(totalCpuLim)} lim`)}</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Memory</div>
+            <div class="bar-track">
+              ${memMaxTotal > 0 ? `
+              <div class="bar-fill bar-fill-muted" style="width:100%; opacity:0.25;"></div>
+              <div class="bar-fill bar-fill-accent" style="width:${memMaxTotal ? Math.min(100, (totalMemReq / memMaxTotal) * 100).toFixed(1) : 0}%; opacity:0.4;"></div>
+              <div class="bar-fill bar-fill-green" style="width:${memMaxTotal ? Math.min(100, (totalMemLim / memMaxTotal) * 100).toFixed(1) : 0}%;"></div>
+              ` : ''}
+            </div>
+            <div class="bar-value">${escapeHtml(`${fmtBytesHuman(totalMemReq)} req / ${fmtBytesHuman(totalMemLim)} lim`)}</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3>Top 10 Pods by CPU Usage</h3>
+          <div class="chart-subtitle">Highest CPU consuming pods (includes system namespaces)</div>
+          ${renderHBarChart(topCpuPods, topCpuMax)}
+        </div>
+        <div class="chart-card">
+          <h3>Top 10 Pods by Memory Usage</h3>
+          <div class="chart-subtitle">Highest memory consuming pods (includes system namespaces)</div>
+          ${renderHBarChart(topMemPods, topMemMax)}
+        </div>
+      </div>
+      `;
+      return html;
+    }
+
+    function renderNodes(items) {
+      const filter = (el('filter-nodes') || {}).value || '';
+      // Nodes are unaffected by the global namespace/label filters.
+      const list = (items || []).filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      return buildTable(
+        ['', 'Name', 'Status', 'Roles', 'CPU', 'Memory', 'Age'],
+        list,
+        n => {
+          const rowId = `nodes:${n.name}`;
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(n.name)}" data-namespace="">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(n.name)}</td>
+            <td><span class="badge ${nodeStatusClass(n.status)}">${escapeHtml(n.status)}</span></td>
+            <td>${escapeHtml((n.roles || []).join(', ') || '—')}</td>
+            <td>${formatCpuCell(n.cpuUsage, n.cpuCapacity)}</td>
+            <td>${formatMemoryCell(n.memoryUsage, n.memoryCapacity)}</td>
+            <td>${formatAge(n.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="7"><div class="detail-panel">${renderNodeDetails(n)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+    function renderPods(items) {
+      const filter = (el('filter-pods') || {}).value || '';
+      const list = (items || [])
+        .filter(i => matchesGlobalFilters(i, { useNamespace: true, useLabels: true }))
+        .filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      return buildTable(
+        ['', 'Name', 'Namespace', 'Workload', 'Status', 'Images', 'Restarts', 'CPU', 'Memory', 'Age'],
+        list,
+        p => {
+          const rowId = `pods:${p.namespace}:${p.name}`;
+          const images = (Array.isArray(p.images) && p.images.length)
+            ? p.images
+            : (Array.isArray(p.containers) ? p.containers.map(c => c.image).filter(Boolean) : []);
+          let imagesCell = '—';
+          if (images.length) {
+            const maxInline = 2;
+            const inline = images.slice(0, maxInline);
+            const extraCount = images.length - inline.length;
+            const inlineHtml = inline
+              .map(img => {
+                const full = String(img);
+                return `<span class="tag" title="${escapeAttr(full)}">${escapeHtml(shortImageName(full))}</span>`;
+              })
+              .join('');
+            const extraHtml = extraCount > 0
+              ? `<span class="tag tag-muted" title="${escapeAttr(images.slice(maxInline).join(', '))}">+${extraCount}</span>`
+              : '';
+            imagesCell = inlineHtml + extraHtml;
+          }
+
+          let workloadCell = '—';
+          const wlName = p.workload;
+          const wlKind = p.workloadKind;
+          if (wlName) {
+            let prefix = '';
+            if (wlKind === 'Deployment') prefix = 'Deployment';
+            else if (wlKind === 'DaemonSet') prefix = 'DS';
+            else if (wlKind === 'StatefulSet') prefix = 'SS';
+            else if (wlKind === 'Job') prefix = 'Job';
+            else if (wlKind === 'CronJob') prefix = 'CronJob';
+            const label = prefix ? `${prefix}: ${wlName}` : wlName;
+            if (wlKind === 'Deployment') {
+              workloadCell = `<span class="badge badge-muted link link-deployment" data-deployment="${escapeAttr(wlName)}" data-namespace="${escapeAttr(p.namespace || '')}">${escapeHtml(label)}</span>`;
+            } else {
+              workloadCell = `<span class="badge badge-muted">${escapeHtml(label)}</span>`;
+            }
+          }
+
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(p.name)}" data-namespace="${escapeAttr(p.namespace)}">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.namespace)}</td>
+            <td>${workloadCell}</td>
+            <td><span class="badge ${podStatusClass(p.status)}">${escapeHtml(p.status)}</span></td>
+            <td>${imagesCell}</td>
+            <td>${p.restartCount ?? '—'}</td>
+            <td>${formatPodCpuCell(p.cpuUsage, p.cpuRequest, p.cpuLimit)}</td>
+            <td>${formatPodMemoryCell(p.memoryUsage, p.memoryRequest, p.memoryLimit)}</td>
+            <td>${formatAge(p.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="10"><div class="detail-panel">${renderPodDetails(p)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+    function renderDeployments(items) {
+      const filter = (el('filter-deployments') || {}).value || '';
+      const list = (items || [])
+        .filter(i => matchesGlobalFilters(i, { useNamespace: true, useLabels: true }))
+        .filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      return buildTable(
+        ['', 'Name', 'Namespace', 'Ready', 'Desired', 'Available', 'Health', 'Age'],
+        list,
+        d => {
+          const ready = d.readyReplicas ?? 0;
+          const desired = d.desiredReplicas ?? 0;
+          const rowId = `deployments:${d.namespace}:${d.name}`;
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(d.name)}" data-namespace="${escapeAttr(d.namespace)}">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(d.name)}</td>
+            <td>${escapeHtml(d.namespace)}</td>
+            <td>${ready}</td>
+            <td>${desired}</td>
+            <td>${d.availableReplicas ?? '—'}</td>
+            <td><span class="badge ${deploymentClass(ready, desired)}">${ready}/${desired}</span></td>
+            <td>${formatAge(d.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="8"><div class="detail-panel">${renderDeploymentDetails(d)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+    function renderServices(items) {
+      const filter = (el('filter-services') || {}).value || '';
+      const list = (items || [])
+        .filter(i => matchesGlobalFilters(i, { useNamespace: true, useLabels: true }))
+        .filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      return buildTable(
+        ['', 'Name', 'Namespace', 'Type', 'Cluster IP', 'External IP', 'Selector', 'Ports', 'Age'],
+        list,
+        s => {
+          const rowId = `services:${s.namespace}:${s.name}`;
+          const selector = (s.selector && Object.keys(s.selector).length) ? renderTagsFromDict(s.selector, { max: null }) : '—';
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(s.name)}" data-namespace="${escapeAttr(s.namespace)}">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(s.name)}</td>
+            <td>${escapeHtml(s.namespace)}</td>
+            <td>${escapeHtml(s.type || '—')}</td>
+            <td>${escapeHtml(s.clusterIP || '—')}</td>
+            <td>${escapeHtml(s.externalIP || '—')}</td>
+            <td class="tags-cell">${selector}</td>
+            <td>${escapeHtml((s.ports || []).map(p => p.port + (p.targetPort ? '/' + p.targetPort : '')).join(', ') || '—')}</td>
+            <td>${formatAge(s.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="9"><div class="detail-panel">${renderServiceDetails(s)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+    function renderIngresses(items) {
+      const filter = (el('filter-ingresses') || {}).value || '';
+      const list = (items || [])
+        .filter(i => matchesGlobalFilters(i, { useNamespace: true, useLabels: true }))
+        .filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      return buildTable(
+        ['', 'Name', 'Namespace', 'Hosts', 'Backend Services', 'Age'],
+        list,
+        i => {
+          const rowId = `ingresses:${i.namespace}:${i.name}`;
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(i.name)}" data-namespace="${escapeAttr(i.namespace)}">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(i.name)}</td>
+            <td>${escapeHtml(i.namespace)}</td>
+            <td>${escapeHtml((i.hosts || []).join(', ') || '—')}</td>
+            <td>${escapeHtml((i.backendServices || []).join(', ') || '—')}</td>
+            <td>${formatAge(i.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="6"><div class="detail-panel">${renderIngressDetails(i)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+    function renderNamespaces(items) {
+      const filter = (el('filter-namespaces') || {}).value || '';
+      const list = (items || [])
+        .filter(i => {
+          if (hideSystemNamespaces && SYSTEM_NAMESPACES.has(i.name)) return false;
+          return !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase());
+        });
+      return buildTable(
+        ['', 'Name', 'Status', 'Age'],
+        list,
+        n => {
+          const rowId = `namespaces:${n.name}`;
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(n.name)}" data-namespace="">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(n.name)}</td>
+            <td>${escapeHtml(n.status)}</td>
+            <td>${formatAge(n.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="4"><div class="detail-panel">${renderNamespaceDetails(n)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+    function renderConfigMaps(items) {
+      const filter = (el('filter-configmaps') || {}).value || '';
+      const list = (items || [])
+        .filter(i => matchesGlobalFilters(i, { useNamespace: true, useLabels: true }))
+        .filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      return buildTable(
+        ['', 'Name', 'Namespace', 'Keys', 'Age'],
+        list,
+        c => {
+          const rowId = `configmaps:${c.namespace}:${c.name}`;
+          const keys = Array.isArray(c.keys) ? c.keys : [];
+          const keyCount = (c.keyCount != null) ? c.keyCount : keys.length;
+          return `
+          <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(c.name)}" data-namespace="${escapeAttr(c.namespace)}">
+            <td class="chev-col"><span class="chev">▶</span></td>
+            <td>${escapeHtml(c.name)}</td>
+            <td>${escapeHtml(c.namespace)}</td>
+            <td>${escapeHtml(String(keyCount ?? '—'))}</td>
+            <td>${formatAge(c.age)}</td>
+          </tr>
+          <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
+            <td colspan="5"><div class="detail-panel">${renderConfigMapDetails(c)}</div></td>
+          </tr>
+          `;
+        }
+      );
+    }
+
+    // ---- Detail helpers for cross-linking and summaries ----
+    function findOwningDeploymentForPod(pod) {
+      const deployments = (_cache.deployments && _cache.deployments.items) ? _cache.deployments.items : [];
+      if (!pod || !Array.isArray(deployments)) return null;
+
+      const owners = Array.isArray(pod.ownerReferences) ? pod.ownerReferences : [];
+      const rsOwner = owners.find(o => o && o.kind === 'ReplicaSet');
+      if (rsOwner && rsOwner.name) {
+        const rsName = rsOwner.name;
+        const idx = rsName.lastIndexOf('-');
+        if (idx > 0) {
+          const guess = rsName.slice(0, idx);
+          const byName = deployments.find(d => d.name === guess && d.namespace === pod.namespace);
+          if (byName) return byName;
+        }
+      }
+
+      const labels = pod.labels || {};
+      const candidates = deployments.filter(d => d.namespace === pod.namespace && d.selector && Object.keys(d.selector).length);
+      const matching = candidates.filter(d => {
+        const sel = d.selector || {};
+        return Object.keys(sel).every(k => String(labels[k] ?? '') === String(sel[k]));
+      });
+      return matching.length === 1 ? matching[0] : null;
+    }
+
+    function getPodsForDeployment(dep) {
+      const pods = (_cache.pods && _cache.pods.items) ? _cache.pods.items : [];
+      if (!dep || !Array.isArray(pods)) return [];
+      const selector = dep.selector || {};
+      const hasSelector = Object.keys(selector).length > 0;
+      return pods.filter(p => {
+        if (p.namespace !== dep.namespace) return false;
+        const labels = p.labels || {};
+        if (hasSelector) {
+          return Object.keys(selector).every(k => String(labels[k] ?? '') === String(selector[k]));
+        }
+        const owners = Array.isArray(p.ownerReferences) ? p.ownerReferences : [];
+        return owners.some(o => o && o.kind === 'ReplicaSet' && (o.name || '').startsWith(dep.name + '-'));
+      });
+    }
+
+    function getPodsForService(svc) {
+      const pods = (_cache.pods && _cache.pods.items) ? _cache.pods.items : [];
+      if (!svc || !Array.isArray(pods)) return [];
+      const selector = svc.selector || {};
+      const hasSelector = Object.keys(selector).length > 0;
+      if (!hasSelector) return [];
+      return pods.filter(p => {
+        if (p.namespace !== svc.namespace) return false;
+        const labels = p.labels || {};
+        return Object.keys(selector).every(k => String(labels[k] ?? '') === String(selector[k]));
+      });
+    }
+
+    function getPodsOnNode(nodeName) {
+      const pods = (_cache.pods && _cache.pods.items) ? _cache.pods.items : [];
+      if (!nodeName || !Array.isArray(pods)) return [];
+      return pods.filter(p => p.nodeName === nodeName);
+    }
+
+    function namespaceSummary(nsName) {
+      const out = {
+        podTotal: 0,
+        podRunning: 0,
+        deployTotal: 0,
+        deployHealthy: 0,
+        svcTotal: 0,
+        cmTotal: 0,
+        ingTotal: 0,
+      };
+      if (!nsName) return out;
+      const pods = (_cache.pods && _cache.pods.items) ? _cache.pods.items : [];
+      pods.forEach(p => {
+        if (p.namespace !== nsName) return;
+        out.podTotal += 1;
+        if ((p.status || '').toLowerCase() === 'running') out.podRunning += 1;
+      });
+      const deps = (_cache.deployments && _cache.deployments.items) ? _cache.deployments.items : [];
+      deps.forEach(d => {
+        if (d.namespace !== nsName) return;
+        out.deployTotal += 1;
+        const desired = d.desiredReplicas ?? 0;
+        const ready = d.readyReplicas ?? 0;
+        if (desired > 0 && ready === desired) out.deployHealthy += 1;
+      });
+      const svcs = (_cache.services && _cache.services.items) ? _cache.services.items : [];
+      svcs.forEach(s => { if (s.namespace === nsName) out.svcTotal += 1; });
+      const cms = (_cache.configmaps && _cache.configmaps.items) ? _cache.configmaps.items : [];
+      cms.forEach(c => { if (c.namespace === nsName) out.cmTotal += 1; });
+      const ings = (_cache.ingresses && _cache.ingresses.items) ? _cache.ingresses.items : [];
+      ings.forEach(i => { if (i.namespace === nsName) out.ingTotal += 1; });
+      return out;
+    }
+
+    // ---- Detail panels (expanded rows) ----
+    function renderPodDetails(p) {
+      const allLabels = (p.labels && Object.keys(p.labels).length) ? renderTagsFromDict(p.labels, { max: null }) : '—';
+      const allAnnotations = (p.annotations && Object.keys(p.annotations).length)
+        ? Object.entries(p.annotations).map(([k, v]) => {
+            const val = String(v ?? '');
+            const short = val.length > 60 ? val.slice(0, 57) + '…' : val;
+            return `<span class="tag tag-muted" title="${escapeAttr(val)}">${escapeHtml(k)}=${escapeHtml(short)}</span>`;
+          }).join('')
+        : '—';
+      const containers = Array.isArray(p.containers) ? p.containers : [];
+      const qosCls = qosBadgeClass(p.qosClass);
+      const qos = p.qosClass
+        ? `<span class="badge ${qosCls}">${escapeHtml(p.qosClass)}</span>`
+        : '—';
+      const nameCopy = `<span class="copyable" data-copy="${escapeAttr(p.name || '')}">${escapeHtml(p.name || '—')}</span>`;
+      const nodeLink = p.nodeName
+        ? `<span class="link link-node" data-node="${escapeAttr(p.nodeName)}">${escapeHtml(p.nodeName)}</span>`
+        : '—';
+
+      let workloadHtml = '';
+      const wlName = p.workload;
+      const wlKind = p.workloadKind;
+      if (wlName) {
+        const kindLabel = wlKind || 'Workload';
+        if (wlKind === 'Deployment') {
+          const label = `${kindLabel}: ${wlName}`;
+          workloadHtml = `<span class="link link-deployment" data-deployment="${escapeAttr(wlName)}" data-namespace="${escapeAttr(p.namespace || '')}">${escapeHtml(label)}</span>`;
+        } else {
+          const label = `${kindLabel}: ${wlName}`;
+          workloadHtml = `<span>${escapeHtml(label)}</span>`;
+        }
+      } else {
+        const ownerDep = findOwningDeploymentForPod(p);
+        if (ownerDep) {
+          const label = `Deployment: ${ownerDep.name}`;
+          workloadHtml = `<span class="link link-deployment" data-deployment="${escapeAttr(ownerDep.name)}" data-namespace="${escapeAttr(ownerDep.namespace)}">${escapeHtml(label)}</span>`;
+        } else {
+          workloadHtml = '<span>None (standalone)</span>';
+        }
+      }
+
+      const volumes = Array.isArray(p.volumes) ? p.volumes : [];
+      const volumeRows = volumes.length
+        ? volumes.map(v => `
+            <tr>
+              <td>${escapeHtml(v.name || '')}</td>
+              <td>${escapeHtml(v.type || '—')}</td>
+              <td>${escapeHtml(v.claimName || v.configMapName || v.secretName || '—')}</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="3" style="text-align:center; color: var(--text-muted);">No volumes</td></tr>`;
+
+      const conds = Array.isArray(p.conditions) ? p.conditions : [];
+      const condBadges = conds.length
+        ? conds.map(c => {
+            const ok = (c.status || '').toLowerCase() === 'true';
+            const cls = ok ? 'badge-running' : 'badge-failed';
+            const title = c.lastTransitionTime || '';
+            return `<span class="badge ${cls}" title="${escapeAttr(title)}">${escapeHtml(c.type || '')}</span>`;
+          }).join(' ')
+        : '—';
+
+      const events = Array.isArray(p.events) ? p.events : [];
+      const eventRows = events.length
+        ? events.map(e => {
+            const isWarning = (e.type || '').toLowerCase() === 'warning';
+            const cls = isWarning ? 'badge-failed' : 'badge-partial';
+            return `
+              <tr>
+                <td><span class="badge ${cls}">${escapeHtml(e.type || 'Normal')}</span></td>
+                <td>${escapeHtml(e.reason || '—')}</td>
+                <td>${escapeHtml(e.message || '')}</td>
+                <td>${formatAge(e.lastTimestamp)}</td>
+              </tr>
+            `;
+          }).join('')
+        : `<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">No recent events</td></tr>`;
+
+      const containerCards = containers.map(c => {
+        const img = c.image || '';
+        const imgCopyAttr = escapeAttr(img);
+        const imgHtml = img
+          ? `<span class="copyable" data-copy="${imgCopyAttr}" title="${imgCopyAttr}" style="font-family: ui-monospace, monospace;">${escapeHtml(img)}</span>`
+          : '—';
+        const req = (c.resources && c.resources.requests) || {};
+        const lim = (c.resources && c.resources.limits) || {};
+        const envNames = Array.isArray(c.envNames) ? c.envNames : [];
+        const envDisplay = envNames.length
+          ? (() => {
+              const first = envNames.slice(0, 8);
+              const more = envNames.length - first.length;
+              return escapeHtml(first.join(', ')) + (more > 0 ? `, +${more} more` : '');
+            })()
+          : '—';
+        const state = c.state || {};
+        const lastState = c.lastState || {};
+        let currentStateText = '—';
+        if ((state.type || '').toLowerCase() === 'running') {
+          currentStateText = 'Running since ' + (formatAge(state.startedAt) || '');
+        } else if ((state.type || '').toLowerCase() === 'waiting') {
+          currentStateText = 'Waiting: ' + (state.reason || 'Unknown');
+        } else if ((state.type || '').toLowerCase() === 'terminated') {
+          currentStateText = 'Terminated: ' + (state.reason || 'Unknown');
+        }
+        let lastStateText = '';
+        if (lastState && lastState.type) {
+          const exitPart = lastState.exitCode != null ? ` (exit ${lastState.exitCode})` : '';
+          lastStateText = `${lastState.type}: ${lastState.reason || 'Unknown'}${exitPart}`;
+        }
+        const readyBadge = c.ready
+          ? '<span class="badge badge-running">Ready</span>'
+          : '<span class="badge badge-failed">Not Ready</span>';
+        return `
+          <div class="container-card">
+            <div class="container-card-header">
+              <span>${escapeHtml(c.name || '')}</span>
+              ${readyBadge}
+            </div>
+            <div style="font-size:0.8rem;">
+              <div><strong>Image:</strong> ${imgHtml}</div>
+              <div><strong>Image Pull Policy:</strong> ${escapeHtml(c.imagePullPolicy || '—')}</div>
+              <div><strong>CPU:</strong> req ${escapeHtml(String(req.cpu ?? '—'))} / lim ${escapeHtml(String(lim.cpu ?? '—'))}</div>
+              <div><strong>Memory:</strong> req ${escapeHtml(String(req.memory ?? '—'))} / lim ${escapeHtml(String(lim.memory ?? '—'))}</div>
+              <div><strong>Ports:</strong> ${
+                (Array.isArray(c.ports) && c.ports.length)
+                  ? c.ports.map(p => `${p.containerPort}/${p.protocol || 'TCP'}`).join(', ')
+                  : '—'
+              }</div>
+              <div><strong>Env Vars:</strong> <span style="color: var(--text-muted);">${envDisplay}</span></div>
+              <div><strong>Readiness Probe:</strong> ${escapeHtml(c.readinessProbeType || '—')}</div>
+              <div><strong>Liveness Probe:</strong> ${escapeHtml(c.livenessProbeType || '—')}</div>
+              <div><strong>Current State:</strong> ${escapeHtml(currentStateText)}</div>
+              <div><strong>Last State:</strong> ${escapeHtml(lastStateText || '—')}</div>
+              <div><strong>Restart Count:</strong> ${escapeHtml(String(c.restartCount ?? '—'))}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Pod Name</div>
+            <div class="value">${nameCopy}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Namespace</div>
+            <div class="value">${escapeHtml(p.namespace || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Status</div>
+            <div class="value"><span class="badge ${podStatusClass(p.status)}">${escapeHtml(p.status || 'Unknown')}</span></div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Pod IP</div>
+            <div class="value">${escapeHtml(p.podIP || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Host IP</div>
+            <div class="value">${escapeHtml(p.hostIP || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Node</div>
+            <div class="value">${nodeLink}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Workload</div>
+            <div class="value">${workloadHtml}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">QoS Class</div>
+            <div class="value">${qos}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">CPU (used / req / lim)</div>
+            <div class="value">${formatPodCpuCell(p.cpuUsage, p.cpuRequest, p.cpuLimit)}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Memory (used / req / lim)</div>
+            <div class="value">${formatPodMemoryCell(p.memoryUsage, p.memoryRequest, p.memoryLimit)}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Start Time / Age</div>
+            <div class="value">${escapeHtml(p.startTime || '—')} (${formatAge(p.startTime)})</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Pod Restarts</div>
+            <div class="value">${escapeHtml(String(p.restartCount ?? '—'))}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Nominated Node</div>
+            <div class="value">${escapeHtml(p.nominatedNode || '—')}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Labels</div>
+            <div class="value">${allLabels}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Annotations</div>
+            <div class="value">${allAnnotations}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Containers</div>
+            <div class="value">
+              ${containerCards || '—'}
+            </div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Volumes</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Name</th><th>Type</th><th>Source</th></tr></thead>
+                <tbody>${volumeRows}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Conditions</div>
+            <div class="value">${condBadges}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Events (last 5)</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Type</th><th>Reason</th><th>Message</th><th>Age</th></tr></thead>
+                <tbody>${eventRows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderNodeDetails(n) {
+      const info = n.nodeInfo || {};
+      const addr = n.addresses || {};
+
+      const conds = Array.isArray(n.conditions) ? n.conditions : [];
+      const condBadges = conds.length
+        ? conds.map(c => {
+            const t = c.type || '';
+            const isReady = t === 'Ready';
+            const isPressure = t === 'MemoryPressure' || t === 'DiskPressure' || t === 'PIDPressure';
+            const statusTrue = (c.status || '').toLowerCase() === 'true';
+            let cls = 'badge-partial';
+            if (isReady) cls = statusTrue ? 'badge-running' : 'badge-failed';
+            if (isPressure && statusTrue) cls = 'badge-failed';
+            const title = c.lastTransitionTime || '';
+            return `<span class="badge ${cls}" title="${escapeAttr(title)}">${escapeHtml(t)}</span>`;
+          }).join(' ')
+        : '—';
+
+      const labels = n.labels && Object.keys(n.labels).length ? renderTagsFromDict(n.labels, { max: null }) : '—';
+      const taints = Array.isArray(n.taints) && n.taints.length
+        ? n.taints.map(t => `<span class="tag tag-red" style="background: rgba(219, 109, 40, 0.25);">${escapeHtml(`${t.key}=${t.value}:${t.effect}`)}</span>`).join('')
+        : '<span style="color: var(--text-muted);">No taints</span>';
+
+      const pods = getPodsOnNode(n.name);
+      const podRows = pods.length
+        ? pods.map(p => {
+            const containers = Array.isArray(p.containers) ? p.containers : [];
+            let cpuReqTotal = 0;
+            let memReqTotal = 0;
+            containers.forEach(c => {
+              const req = (c.resources && c.resources.requests) || {};
+              const cCpu = cpuToMillis(req.cpu);
+              const cMem = memoryToBytes(req.memory);
+              if (cCpu != null) cpuReqTotal += cCpu;
+              if (cMem != null) memReqTotal += cMem;
+            });
+            const cpuDisplay = cpuReqTotal ? `${cpuReqTotal}m` : '—';
+            const memDisplay = memReqTotal ? `${Math.round(memReqTotal / (1024 * 1024))}Mi` : '—';
+            return `
+              <tr>
+                <td><span class="link link-pod" data-pod="${escapeAttr(p.name)}" data-namespace="${escapeAttr(p.namespace)}">${escapeHtml(p.name)}</span></td>
+                <td>${escapeHtml(p.namespace)}</td>
+                <td><span class="badge ${podStatusClass(p.status)}">${escapeHtml(p.status || 'Unknown')}</span></td>
+                <td>${escapeHtml(cpuDisplay)}</td>
+                <td>${escapeHtml(memDisplay)}</td>
+              </tr>
+            `;
+          }).join('')
+        : `<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No pods scheduled on this node</td></tr>`;
+
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Node Name</div>
+            <div class="value"><span class="copyable" data-copy="${escapeAttr(n.name || '')}">${escapeHtml(n.name || '—')}</span></div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Status</div>
+            <div class="value"><span class="badge ${nodeStatusClass(n.status)}">${escapeHtml(n.status || 'Unknown')}</span></div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Roles</div>
+            <div class="value">${escapeHtml((n.roles || []).join(', ') || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Internal / External IP</div>
+            <div class="value">${escapeHtml(addr.internalIP || '—')} / ${escapeHtml(addr.externalIP || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Pod CIDR</div>
+            <div class="value">${escapeHtml(n.podCIDR || '')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Creation Age</div>
+            <div class="value">${formatAge(n.age)}</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="title">OS Image</div>
+            <div class="value">${escapeHtml(info.osImage || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Kernel Version</div>
+            <div class="value">${escapeHtml(info.kernelVersion || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Container Runtime</div>
+            <div class="value">${escapeHtml(info.containerRuntime || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Kubelet / Proxy</div>
+            <div class="value">${escapeHtml((info.kubeletVersion || '—') + ' / ' + (info.kubeProxyVersion || '—'))}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Architecture</div>
+            <div class="value">${escapeHtml(info.architecture || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Operating System</div>
+            <div class="value">${escapeHtml(info.operatingSystem || '—')}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Capacity vs Allocatable</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Resource</th><th>Capacity</th><th>Allocatable</th></tr></thead>
+                <tbody>
+                  <tr><td>CPU</td><td>${escapeHtml(String(n.cpuCapacity ?? '—'))}</td><td>${escapeHtml(String(n.allocatableCPU ?? '—'))}</td></tr>
+                  <tr><td>Memory</td><td>${formatMemBytes(n.memoryCapacity)}</td><td>${formatMemBytes(n.allocatableMemory)}</td></tr>
+                  <tr><td>Pods</td><td>${escapeHtml(String(n.podsCapacity ?? '—'))}</td><td>${escapeHtml(String(n.allocatablePods ?? '—'))}</td></tr>
+                  <tr><td>Ephemeral</td><td>${escapeHtml(String(n.ephemeralStorageCapacity ?? '—'))}</td><td>${escapeHtml(String(n.allocatableEphemeralStorage ?? '—'))}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="detail-item">
+            <div class="title">CPU Usage</div>
+            <div class="value">${formatCpuCell(n.cpuUsage, n.allocatableCPU)}</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="title">Memory Usage</div>
+            <div class="value">${formatMemoryCell(n.memoryUsage, n.allocatableMemory)}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Conditions</div>
+            <div class="value">${condBadges}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Labels</div>
+            <div class="value">${labels}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Taints</div>
+            <div class="value">${taints}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Running Pods on this Node</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Name</th><th>Namespace</th><th>Status</th><th>CPU Req</th><th>Mem Req</th></tr></thead>
+                <tbody>${podRows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDeploymentDetails(d) {
+      const labels = (d.labels && Object.keys(d.labels).length) ? renderTagsFromDict(d.labels, { max: null }) : '—';
+      const sel = (d.selector && Object.keys(d.selector).length) ? renderTagsFromDict(d.selector, { max: null }) : '—';
+      const strat = d.strategy || {};
+      const strategyText = strat && strat.type
+        ? `${escapeHtml(strat.type)}${strat.maxSurge || strat.maxUnavailable ? ` (maxSurge=${escapeHtml(String(strat.maxSurge ?? '—'))}, maxUnavailable=${escapeHtml(String(strat.maxUnavailable ?? '—'))})` : ''}`
+        : '—';
+      const conds = Array.isArray(d.conditions) ? d.conditions : [];
+      const condBadges = conds.length
+        ? conds.map(c => {
+            const ok = (c.status || '').toLowerCase() === 'true';
+            const cls = ok ? 'badge-running' : 'badge-failed';
+            return `<span class="badge ${cls}">${escapeHtml(c.type || '')}</span>`;
+          }).join(' ')
+        : '—';
+
+      const tmplContainers = Array.isArray(d.templateContainers) ? d.templateContainers : [];
+      const tmplCards = tmplContainers.map(c => {
+        const img = c.image || '';
+        const imgCopyAttr = escapeAttr(img);
+        const imgHtml = img
+          ? `<span class="copyable" data-copy="${imgCopyAttr}" title="${imgCopyAttr}" style="font-family: ui-monospace, monospace;">${escapeHtml(img)}</span>`
+          : '—';
+        const req = (c.resources && c.resources.requests) || {};
+        const lim = (c.resources && c.resources.limits) || {};
+        const envNames = Array.isArray(c.envNames) ? c.envNames : [];
+        const envDisplay = envNames.length
+          ? (() => {
+              const first = envNames.slice(0, 8);
+              const more = envNames.length - first.length;
+              return escapeHtml(first.join(', ')) + (more > 0 ? `, +${more} more` : '');
+            })()
+          : '—';
+        return `
+          <div class="container-card">
+            <div class="container-card-header">
+              <span>${escapeHtml(c.name || '')}</span>
+            </div>
+            <div style="font-size:0.8rem;">
+              <div><strong>Image:</strong> ${imgHtml}</div>
+              <div><strong>CPU:</strong> req ${escapeHtml(String(req.cpu ?? '—'))} / lim ${escapeHtml(String(lim.cpu ?? '—'))}</div>
+              <div><strong>Memory:</strong> req ${escapeHtml(String(req.memory ?? '—'))} / lim ${escapeHtml(String(lim.memory ?? '—'))}</div>
+              <div><strong>Env Vars:</strong> <span style="color: var(--text-muted);">${envDisplay}</span></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const pods = getPodsForDeployment(d);
+      const podRows = pods.length
+        ? pods.map(p => `
+            <tr>
+              <td><span class="link link-pod" data-pod="${escapeAttr(p.name)}" data-namespace="${escapeAttr(p.namespace)}">${escapeHtml(p.name)}</span></td>
+              <td><span class="badge ${podStatusClass(p.status)}">${escapeHtml(p.status || 'Unknown')}</span></td>
+              <td>${escapeHtml(String(p.restartCount ?? '0'))}</td>
+              <td>${formatAge(p.age)}</td>
+              <td>${escapeHtml(p.nodeName || '—')}</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No pods matched</td></tr>`;
+
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Name</div>
+            <div class="value"><span class="copyable" data-copy="${escapeAttr(d.name || '')}">${escapeHtml(d.name || '—')}</span></div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Namespace</div>
+            <div class="value">${escapeHtml(d.namespace || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Replicas</div>
+            <div class="value">${escapeHtml(String(d.readyReplicas ?? 0))} ready / ${escapeHtml(String(d.desiredReplicas ?? 0))} desired / ${escapeHtml(String(d.availableReplicas ?? 0))} available</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Strategy</div>
+            <div class="value">${strategyText}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Labels</div>
+            <div class="value">${labels}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Pod Selector</div>
+            <div class="value">${sel}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Pod Template (Containers)</div>
+            <div class="value">
+              ${tmplCards || '—'}
+            </div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Conditions</div>
+            <div class="value">${condBadges}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Owned Pods (live)</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Pod Name</th><th>Status</th><th>Restarts</th><th>Age</th><th>Node</th></tr></thead>
+                <tbody>${podRows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderServiceDetails(s) {
+      const selector = (s.selector && Object.keys(s.selector).length) ? renderTagsFromDict(s.selector, { max: null }) : '—';
+      const affinity = escapeHtml(s.sessionAffinity || '—');
+      const ports = (s.ports || []).map(p => ({
+        name: p.name,
+        protocol: p.protocol || 'TCP',
+        port: p.port,
+        targetPort: p.targetPort,
+        nodePort: p.nodePort,
+      }));
+      const portsRows = ports.length
+        ? ports.map(p => `
+            <tr>
+              <td>${escapeHtml(p.name || '—')}</td>
+              <td>${escapeHtml(p.protocol || 'TCP')}</td>
+              <td>${escapeHtml(String(p.port ?? '—'))}</td>
+              <td>${escapeHtml(p.targetPort != null ? String(p.targetPort) : '—')}</td>
+              <td>${escapeHtml(p.nodePort != null ? String(p.nodePort) : '—')}</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No ports</td></tr>`;
+
+      const pods = getPodsForService(s);
+      const podRows = pods.length
+        ? pods.map(p => `
+            <tr>
+              <td><span class="link link-pod" data-pod="${escapeAttr(p.name)}" data-namespace="${escapeAttr(p.namespace)}">${escapeHtml(p.name)}</span></td>
+              <td><span class="badge ${podStatusClass(p.status)}">${escapeHtml(p.status || 'Unknown')}</span></td>
+              <td>${escapeHtml(p.podIP || '—')}</td>
+              <td>${escapeHtml(p.nodeName || '—')}</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">${selector === '—' ? 'No pod selector' : 'No pods matched'}</td></tr>`;
+
+      const endpoints = Array.isArray(s.endpoints) ? s.endpoints : [];
+      const endpointRows = endpoints.length
+        ? endpoints.map(ep => `
+            <tr>
+              <td>${escapeHtml(ep.ip || '—')}</td>
+              <td>${
+                (Array.isArray(ep.ports) && ep.ports.length)
+                  ? ep.ports.map(p => `${p.port}/${p.protocol || 'TCP'}`).join(', ')
+                  : '—'
+              }</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="2" style="text-align:center; color: var(--text-muted);">No endpoints</td></tr>`;
+
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Name</div>
+            <div class="value"><span class="copyable" data-copy="${escapeAttr(s.name || '')}">${escapeHtml(s.name || '—')}</span></div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Namespace</div>
+            <div class="value">${escapeHtml(s.namespace || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Type</div>
+            <div class="value">${escapeHtml(s.type || 'ClusterIP')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Cluster IP</div>
+            <div class="value">${escapeHtml(s.clusterIP || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">External IP</div>
+            <div class="value">${escapeHtml(s.externalIP || '—')}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Session Affinity</div>
+            <div class="value">${affinity}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Health Check Node Port</div>
+            <div class="value">${escapeHtml(String(s.healthCheckNodePort ?? '—'))}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Ports</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>Target Port</th><th>Node Port</th></tr></thead>
+                <tbody>${portsRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Selector</div>
+            <div class="value">${selector}</div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Matched Pods</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Pod Name</th><th>Status</th><th>Pod IP</th><th>Node</th></tr></thead>
+                <tbody>${podRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Endpoints</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>IP</th><th>Ports</th></tr></thead>
+                <tbody>${endpointRows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderConfigMapDetails(c) {
+      const keys = Array.isArray(c.keys) ? c.keys : [];
+      const data = c.data || {};
+      const items = keys.length ? keys.map(k => {
+        const raw = data && Object.prototype.hasOwnProperty.call(data, k) ? String(data[k]) : null;
+        let displayVal = '[binary or large value]';
+        let canShow = false;
+        if (raw != null && !raw.startsWith('-----BEGIN') && raw.length <= 200) {
+          displayVal = raw;
+          canShow = true;
+        }
+        const valueHtml = canShow
+          ? `<pre style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-size: 0.75rem; overflow-x:auto;">${escapeHtml(displayVal)}</pre>
+             <button type="button" class="btn-secondary" style="margin-top:4px; padding:4px 8px; font-size:0.7rem;" data-copy-value="${escapeAttr(displayVal)}">Copy Value</button>`
+          : '<span style="color: var(--text-muted);">[binary or large value]</span>';
+        return `
+          <div style="margin-bottom:8px;">
+            <span class="tag" style="display:inline-block; margin-bottom:4px;">${escapeHtml(String(k))}</span>
+            <div>${valueHtml}</div>
+          </div>
+        `;
+      }).join('') : '<span style="color: var(--text-muted);">No keys</span>';
+
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Overview</div>
+            <div class="value">
+              Name: <span class="copyable" data-copy="${escapeAttr(c.name || '')}">${escapeHtml(c.name || '—')}</span><br/>
+              Namespace: ${escapeHtml(c.namespace || '—')}<br/>
+              Age: ${formatAge(c.age)}<br/>
+              Number of keys: ${escapeHtml(String(c.keyCount ?? (keys.length || 0)))}
+            </div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Data Keys</div>
+            <div class="value">${items}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderNamespaceDetails(n) {
+      const labels = (n.labels && Object.keys(n.labels).length) ? renderTagsFromDict(n.labels, { max: null }) : '—';
+      const summary = namespaceSummary(n.name);
+      const podLabel = `${summary.podRunning}/${summary.podTotal}`;
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Overview</div>
+            <div class="value">
+              Name: ${escapeHtml(n.name || '—')}<br/>
+              Status: ${escapeHtml(n.status || '—')}<br/>
+              Age: ${formatAge(n.age)}
+            </div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Labels</div>
+            <div class="value">${labels}</div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Resource Summary</div>
+            <div class="value">
+              <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                <div class="card" style="padding:8px 12px; font-size:0.8rem;">
+                  <div class="label">Pods (running / total)</div>
+                  <div class="value"><span class="link link-namespace-pods" data-namespace="${escapeAttr(n.name)}">${escapeHtml(podLabel)}</span></div>
+                </div>
+                <div class="card" style="padding:8px 12px; font-size:0.8rem;">
+                  <div class="label">Deployments (healthy / total)</div>
+                  <div class="value">${escapeHtml(String(summary.deployHealthy))}/${escapeHtml(String(summary.deployTotal))}</div>
+                </div>
+                <div class="card" style="padding:8px 12px; font-size:0.8rem;">
+                  <div class="label">Services</div>
+                  <div class="value">${escapeHtml(String(summary.svcTotal))}</div>
+                </div>
+                <div class="card" style="padding:8px 12px; font-size:0.8rem;">
+                  <div class="label">ConfigMaps</div>
+                  <div class="value">${escapeHtml(String(summary.cmTotal))}</div>
+                </div>
+                <div class="card" style="padding:8px 12px; font-size:0.8rem;">
+                  <div class="label">Ingresses</div>
+                  <div class="value">${escapeHtml(String(summary.ingTotal))}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderIngressDetails(i) {
+      const rules = Array.isArray(i.rules) ? i.rules : [];
+      const tls = Array.isArray(i.tls) ? i.tls : [];
+      const hosts = Array.isArray(i.hosts) ? i.hosts : [];
+      const tlsHosts = new Set();
+      tls.forEach(t => (t.hosts || []).forEach(h => tlsHosts.add(h)));
+      const tlsEnabled = hosts.filter(h => tlsHosts.has(h));
+
+      const ruleRows = rules.length
+        ? rules.map(r => `
+            <tr>
+              <td>${escapeHtml(r.host || '—')}</td>
+              <td>${escapeHtml(r.path || '/')}</td>
+              <td>${escapeHtml(r.pathType || '—')}</td>
+              <td>${escapeHtml(r.serviceName || '—')}</td>
+              <td>${escapeHtml(r.servicePort != null ? String(r.servicePort) : '—')}</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No rules</td></tr>`;
+
+      const tlsRows = tls.length
+        ? tls.map(t => `
+            <tr>
+              <td>${escapeHtml(t.secretName || '—')}</td>
+              <td>${escapeHtml((t.hosts || []).join(', ') || '—')}</td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="2" style="text-align:center; color: var(--text-muted);">No TLS</td></tr>`;
+
+      return `
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="title">Overview</div>
+            <div class="value">
+              Name: <span class="copyable" data-copy="${escapeAttr(i.name || '')}">${escapeHtml(i.name || '—')}</span><br/>
+              Namespace: ${escapeHtml(i.namespace || '—')}<br/>
+              Age: ${formatAge(i.age)}<br/>
+              Ingress Class: ${escapeHtml(i.ingressClassName || '—')}<br/>
+              TLS: ${tls.length ? 'Yes' : 'No'}${tlsEnabled.length ? ' (' + escapeHtml(tlsEnabled.join(', ')) + ' TLS-enabled)' : ''}
+            </div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">Rules</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Host</th><th>Path</th><th>Path Type</th><th>Backend Service</th><th>Backend Port</th></tr></thead>
+                <tbody>${ruleRows}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="detail-item" style="grid-column: 1 / -1;">
+            <div class="title">TLS</div>
+            <div class="value">
+              <table class="mini-table">
+                <thead><tr><th>Secret</th><th>Hosts</th></tr></thead>
+                <tbody>${tlsRows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTabContent(tabId, data) {
+      const panel = el('tab-' + tabId);
+      if (!panel) return;
+      const wrap = panel.querySelector('.table-panel');
+      if (!wrap) return;
+      // Reset expanded state on each re-render to avoid stale open rows.
+      expandedByTab[tabId] = null;
+      let html = '';
+      if (tabId === 'graphs') {
+        html = renderGraphsTab();
+      } else if (data && data.error) {
+        html = '<p style="color: var(--text-muted);">' + escapeHtml(data.error) + '</p>';
+      } else if (data && data.message) {
+        html = '<p style="color: var(--text-muted);">' + escapeHtml(data.message) + '</p>';
+      } else {
+        const items = data && data.items ? data.items : [];
+        if (tabId === 'nodes') html = renderNodes(items);
+        else if (tabId === 'pods') html = renderPods(items);
+        else if (tabId === 'deployments') html = renderDeployments(items);
+        else if (tabId === 'services') html = renderServices(items);
+        else if (tabId === 'ingresses') html = renderIngresses(items);
+        else if (tabId === 'namespaces') html = renderNamespaces(items);
+        else if (tabId === 'configmaps') html = renderConfigMaps(items);
+      }
+      wrap.innerHTML = html;
+      attachExpandableRows(tabId);
+    }
+
+    let _cache = {};
+    async function fetchClusterData() {
+      if (!selectedCluster) return;
+      try {
+        const TAB_IDS_TO_FETCH = TAB_IDS.filter(id => id !== 'graphs');
+        const [summaryRes, ...rest] = await Promise.all([
+          fetch('/api/cluster/' + encodeURIComponent(selectedCluster) + '/summary'),
+          ...TAB_IDS_TO_FETCH.map(id => fetch('/api/cluster/' + encodeURIComponent(selectedCluster) + '/' + id)),
+        ]);
+        const summary = summaryRes.ok ? await summaryRes.json() : {};
+        _cache.summary = summary;
+        const results = await Promise.all(rest.map(r => r.ok ? r.json() : {}));
+        TAB_IDS_TO_FETCH.forEach((id, i) => { _cache[id] = results[i] || {}; });
+        lastClusterFetchTime = Date.now();
+        const clusterMeta = clustersList.find(c => c.name === selectedCluster);
+        const lastSeen = clusterMeta && clusterMeta.last_seen ? new Date(clusterMeta.last_seen).getTime() : 0;
+        const stale = lastSeen && (Date.now() - lastSeen) / 1000 > HEALTHY_SECONDS;
+        el('staleBanner').style.display = stale ? 'block' : 'none';
+        renderSummary(summary);
+        renderGlobalFilterBar();
+        TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
+        updateLastUpdated();
+      } catch (e) {
+        console.warn('fetchClusterData failed', e);
+      }
+      const ind = el('refreshIndicator');
+      if (ind) {
+        ind.style.opacity = '1';
+        setTimeout(() => {
+          ind.style.opacity = '0';
+        }, 800);
+      }
+    }
+
+    function updateLastUpdated() {
+      const sec = lastClusterFetchTime ? Math.floor((Date.now() - lastClusterFetchTime) / 1000) : null;
+      el('lastUpdated').textContent = sec != null ? 'Last updated: ' + sec + 's ago' : 'Last updated: —';
+    }
+
+    function initResourceTabs() {
+      const labels = { graphs: 'Graphs 📊', nodes: 'Nodes', pods: 'Pods', deployments: 'Deployments', services: 'Services', ingresses: 'Ingresses', namespaces: 'Namespaces', configmaps: 'ConfigMaps' };
+      const tabsEl = el('tabs');
+      tabsEl.innerHTML = TAB_IDS.map(id => `<button class="tab" data-tab="${id}" type="button">${labels[id]}</button>`).join('');
+      const panelsEl = el('tabPanels');
+      panelsEl.innerHTML = TAB_IDS.map(id => `
+        <div class="tab-panel" id="tab-${id}">
+          <input type="text" class="filter-input" id="filter-${id}" placeholder="Filter ${labels[id]}..." ${id === 'graphs' ? 'style="display:none;"' : ''} />
+          <div class="table-panel"></div>
+        </div>
+      `).join('');
+      qsa('.tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          collapseAllExpanded();
+          qsa('.tab').forEach(b => b.classList.remove('active'));
+          qsa('.tab-panel').forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          el('tab-' + btn.dataset.tab).classList.add('active');
+        });
+      });
+      qs('.tab').classList.add('active');
+      qs('.tab-panel').classList.add('active');
+      TAB_IDS.forEach(id => {
+        const input = el('filter-' + id);
+        if (input) {
+          input.addEventListener('input', () => renderTabContent(id, _cache[id]));
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') e.preventDefault();
+          });
+        }
+      });
+    }
+
+    // --- Add Cluster: cluster name validation ---
+    el('addClusterName').addEventListener('input', () => {
+      currentToken = null;
+      currentHelmCommand = null;
+      const name = el('addClusterName').value.trim().toLowerCase();
+      const valid = validateClusterName(name);
+      const valEl = el('clusterNameValidation');
+      valEl.textContent = valid ? '✓ Valid' : (name ? 'Use only letters, numbers, hyphens and underscores' : '');
+      valEl.className = 'validation ' + (valid ? 'valid' : (name ? 'invalid' : ''));
+      el('btnGenerateToken').disabled = !valid;
+    });
+
+    // Persist admin key as the user types (so it can be reused across tabs/actions).
+    el('addAdminKey').addEventListener('input', () => {
+      adminKey = el('addAdminKey').value || '';
+    });
+
+    async function generateToken() {
+      const clusterName = el('addClusterName').value.trim();
+      // Use module-level adminKey so it can be reused elsewhere (e.g. delete cluster).
+      adminKey = el('addAdminKey').value || '';
+      addClusterConnected = false;
+      el('addClusterError').style.display = 'none';
+      el('addClusterError').textContent = '';
+      try {
+        const r = await fetch('/api/generate-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+          body: JSON.stringify({ cluster_name: clusterName }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (r.status === 409) {
+            el('addClusterError').textContent = "A cluster named '" + clusterName + "' is already registered. Choose a different name or view it in the sidebar.";
+            el('addClusterError').style.display = 'block';
+          } else {
+            el('addClusterError').textContent = data.error || 'Failed to generate token';
+            el('addClusterError').style.display = 'block';
+          }
+          return;
+        }
+        tokenExpiresAt = new Date(data.expires_at).getTime();
+        currentToken = data.token || null;
+        currentHelmCommand = data.helm_command || null;
+        el('tokenBlock').style.display = 'block';
+        const tokenInput = el('registrationTokenInput');
+        if (tokenInput) {
+          tokenInput.value = currentToken || '';
+          tokenInput.type = 'password';
+          tokenInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') e.preventDefault();
+          });
+        }
+        el('helmCommand').textContent = currentHelmCommand || '';
+        const toggleBtn = el('btnToggleToken');
+        if (toggleBtn) toggleBtn.textContent = 'Show';
+        if (tokenCountdownInterval) clearInterval(tokenCountdownInterval);
+        function updateCountdown() {
+          const left = Math.max(0, Math.floor((tokenExpiresAt - Date.now()) / 1000));
+          const m = Math.floor(left / 60);
+          const s = left % 60;
+          const elm = el('tokenCountdown');
+          elm.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+          elm.classList.toggle('low', left < 120);
+          el('tokenExpiredMsg').style.display = left === 0 ? 'block' : 'none';
+          if (left === 0) clearInterval(tokenCountdownInterval);
+        }
+        updateCountdown();
+        tokenCountdownInterval = setInterval(updateCountdown, 1000);
+        el('addClusterStatus').innerHTML = '⏳ Waiting for cluster to connect...';
+      } catch (e) {
+        el('addClusterError').textContent = e.message || 'Request failed';
+        el('addClusterError').style.display = 'block';
+      }
+    }
+
+    // --- Add Cluster: generate token ---
+    el('addClusterName').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') e.preventDefault();
+    });
+    el('addAdminKey').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') e.preventDefault();
+    });
+    el('btnGenerateToken').addEventListener('click', () => {
+      generateToken();
+    });
+
+    el('btnCopyCommand').addEventListener('click', () => {
+      const cmd = currentHelmCommand || el('helmCommand').textContent;
+      if (cmd && navigator.clipboard) {
+        navigator.clipboard.writeText(cmd).then(() => {
+          const btn = el('btnCopyCommand');
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy Command'; }, 2000);
+        });
+      }
+    });
+
+    el('btnToggleToken').addEventListener('click', () => {
+      const tokenInput = el('registrationTokenInput');
+      const toggleBtn = el('btnToggleToken');
+      if (!tokenInput || !toggleBtn) return;
+      if (tokenInput.type === 'password') {
+        tokenInput.type = 'text';
+        toggleBtn.textContent = 'Hide';
+      } else {
+        tokenInput.type = 'password';
+        toggleBtn.textContent = 'Show';
+      }
+    });
+
+    el('btnCopyToken').addEventListener('click', () => {
+      if (currentToken && navigator.clipboard) {
+        navigator.clipboard.writeText(currentToken).then(() => {
+          const btn = el('btnCopyToken');
+          const orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = orig; }, 2000);
+        });
+      }
+    });
+
+    el('btnNewToken').addEventListener('click', () => {
+      generateToken();
+    });
+
+    // --- Add Cluster: poll for cluster to appear ---
+    let addClusterConnected = false;
+    setInterval(() => {
+      if (!el('tokenBlock') || el('tokenBlock').style.display !== 'block') return;
+      const clusterName = el('addClusterName').value.trim();
+      if (!clusterName) return;
+      const found = clustersList.find(c => c.name === clusterName);
+      const statusEl = el('addClusterStatus');
+      if (found && !addClusterConnected) {
+        addClusterConnected = true;
+        statusEl.innerHTML = '✅ Cluster \'' + escapeHtml(clusterName) + '\' connected successfully! <span class="view-cluster-link" id="addClusterViewLink" role="button" tabindex="0">View Cluster →</span>';
+        if (tokenCountdownInterval) { clearInterval(tokenCountdownInterval); tokenCountdownInterval = null; }
+        el('tokenCountdown').style.display = 'none';
+        const viewLink = el('addClusterViewLink');
+        if (viewLink) {
+          viewLink.addEventListener('click', () => selectCluster(clusterName));
+          viewLink.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectCluster(clusterName); } });
+        }
+      }
+    }, ADD_CLUSTER_POLL_MS);
+
+    // --- Main tabs: Cluster vs Add Cluster ---
+    el('mainTabCluster').addEventListener('click', () => {
+      qsa('.main-tab').forEach(t => { t.classList.toggle('active', t.dataset.page === 'cluster'); });
+      el('pageAdd').style.display = 'none';
+      if (selectedCluster) {
+        el('pageCluster').style.display = 'block';
+        el('pageClusterPlaceholder').style.display = 'none';
+      } else {
+        el('pageCluster').style.display = 'none';
+        el('pageClusterPlaceholder').style.display = 'block';
+      }
+    });
+    el('mainTabAdd').addEventListener('click', () => {
+      showAddClusterPage();
+    });
+
+    // --- Config: DASHBOARD_URL warning ---
+    fetch('/api/config').then(r => r.json()).then(data => {
+      if (!data.dashboardUrl) {
+        el('dashboardUrlWarning').textContent = '⚠ DASHBOARD_URL env var not set. Edit the command below to replace YOUR_DASHBOARD_URL with your actual dashboard URL before running.';
+        el('dashboardUrlWarning').style.display = 'block';
+      }
+    }).catch(() => {});
+
+    // --- Refresh button ---
+    el('btnRefresh').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      el('btnRefresh').disabled = true;
+      fetchClusters().then(() => {
+        if (selectedCluster) return fetchClusterData();
+      }).finally(() => { el('btnRefresh').disabled = false; });
+    });
+
+    // Sidebar toggle button wiring.
+    const sidebarToggleEl = el('sidebarToggle');
+    if (sidebarToggleEl) {
+      sidebarToggleEl.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleSidebar();
+      });
+    }
+
+    initResourceTabs();
+    loadSidebarState();
+    try {
+      const stored = localStorage.getItem('hideSystemNamespaces');
+      if (stored === 'false') hideSystemNamespaces = false;
+      else hideSystemNamespaces = true;
+    } catch (e) {
+      hideSystemNamespaces = true;
+    }
+    fetchClusters();
+    setInterval(fetchClusters, CLUSTERS_POLL_MS);
+    setInterval(() => {
+      if (selectedCluster) fetchClusterData();
+    }, CLUSTER_DATA_POLL_MS);
+
+    }); // DOMContentLoaded
+  </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: k8s-dashboard-agent
+description: Lightweight read-only Kubernetes monitoring agent
+version: 0.1.0
+appVersion: "1.0"
