@@ -1,16 +1,9 @@
+replicaCount: 1
+
 image:
-  repository: us-central1-docker.pkg.dev/consumption-442810/micro-service-iam/k8s-agent
+  repository: dhruvmistry200/kubepulse-agent
   tag: latest
-  pullPolicy: IfNotPresent
-
-# One-time registration token from dashboard "Add Cluster" tab (valid 10 minutes)
-registrationToken: ""
-
-# Your dashboard URL (e.g. https://k8s-dashboard.run.app)
-dashboardUrl: ""
-
-# Friendly name for this cluster (e.g. production, staging)
-clusterName: "default"
+  pullPolicy: Always
 
 service:
   type: ClusterIP
@@ -21,9 +14,12 @@ resources:
     cpu: 100m
     memory: 128Mi
   limits:
-    cpu: 200m
-    memory: 256Mi
+    cpu: 500m
+    memory: 512Mi
 
-replicaCount: 1
+# Dashboard connection settings (required — set these during helm install)
+registrationToken: ""
+dashboardUrl: ""
+clusterName: ""
 
 nameOverride: ""

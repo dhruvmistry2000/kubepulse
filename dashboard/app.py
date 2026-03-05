@@ -27,6 +27,10 @@ if not SECRET_KEY:
 
 ADMIN_KEY = (os.environ.get("ADMIN_KEY") or "").strip() or SECRET_KEY
 DASHBOARD_URL = (os.environ.get("DASHBOARD_URL") or "").strip()
+AGENT_IMAGE = os.environ.get(
+    "AGENT_IMAGE",
+    "dhruvmistry200/kubepulse-agent:latest",
+)
 
 # In-memory store: cluster_name -> { registered_at, last_seen, data, agent_version }
 clusters = {}
@@ -179,16 +183,25 @@ def api_generate_token():
             "expires_at": expires_at,
             "used": False,
         }
-    # Multi-line helm command with each --set on its own line (image placeholders included).
+    # Multi-line helm command with each --set on its own line.
     dashboard_url = DASHBOARD_URL or "DASHBOARD_URL_HERE"
+
+    # Split AGENT_IMAGE into repository and tag
+    agent_image = AGENT_IMAGE  # e.g. "dhruvmistry200/kubepulse-agent:latest"
+    if ":" in agent_image:
+        img_repo, img_tag = agent_image.rsplit(":", 1)
+    else:
+        img_repo = agent_image
+        img_tag = "latest"
+
     helm_command = (
-        "helm install k8s-agent ./helm \\\n"
-        "  --set image.repository=us-central1-docker.pkg.dev/consumption-442810/micro-service-iam/k8s-agent \\\n"
-        "  --set image.tag=v7 \\\n"
-        "  --set registrationToken=%s \\\n"
-        "  --set dashboardUrl=%s \\\n"
-        "  --set clusterName=%s"
-    ) % (token, dashboard_url, cluster_name)
+        "helm install kubepulse-agent ./helm \\\n"
+        f"  --set image.repository={img_repo} \\\n"
+        f"  --set image.tag={img_tag} \\\n"
+        f"  --set registrationToken={token} \\\n"
+        f"  --set dashboardUrl={dashboard_url} \\\n"
+        f"  --set clusterName={cluster_name}"
+    )
 
     print("INFO: Registration token generated for cluster '%s', expires in 10 minutes" % cluster_name, flush=True)
     return jsonify({
