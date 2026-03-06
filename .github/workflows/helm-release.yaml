@@ -1,0 +1,45 @@
+name: Release Helm Chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'helm/**'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p docs
+          helm package helm/ --destination docs/
+
+      - name: Update Helm repo index
+        run: |
+          # Merge with existing index if present
+          if [ -f docs/index.yaml ]; then
+            helm repo index docs/ --url https://dhruvmistry2000.github.io/kubepulse --merge docs/index.yaml
+          else
+            helm repo index docs/ --url https://dhruvmistry2000.github.io/kubepulse
+          fi
+
+      - name: Commit and push to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --staged --quiet || git commit -m "ci: update helm chart release [skip ci]"
+          git push
