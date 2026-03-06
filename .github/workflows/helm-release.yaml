@@ -1,7 +1,6 @@
 name: Release Helm Chart
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
@@ -15,7 +14,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -25,22 +24,30 @@ jobs:
 
       - name: Package Helm chart
         run: |
-          mkdir -p docs
-          helm package helm/ --destination docs/
+          mkdir -p .helm-output
+          helm package helm/ --destination .helm-output/
 
-      - name: Update Helm repo index
-        run: |
-          # Merge with existing index if present
-          if [ -f docs/index.yaml ]; then
-            helm repo index docs/ --url https://dhruvmistry2000.github.io/kubepulse --merge docs/index.yaml
-          else
-            helm repo index docs/ --url https://dhruvmistry2000.github.io/kubepulse
-          fi
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit and push to main
+      - name: Copy package and update index
         run: |
+          cp .helm-output/*.tgz gh-pages/
+          helm repo index gh-pages/ \
+            --url https://dhruvmistry2000.github.io/kubepulse \
+            --merge gh-pages/index.yaml 2>/dev/null || \
+          helm repo index gh-pages/ \
+            --url https://dhruvmistry2000.github.io/kubepulse
+
+      - name: Commit and push to gh-pages
+        run: |
+          cd gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/
-          git diff --staged --quiet || git commit -m "ci: update helm chart release [skip ci]"
+          git add .
+          git diff --staged --quiet || git commit -m "ci: release helm chart from main"
           git push
