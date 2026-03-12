@@ -3,11 +3,11 @@ entries:
   k8s-dashboard-agent:
   - apiVersion: v2
     appVersion: "1.0"
-    created: "2026-03-06T11:20:11.84579248Z"
+    created: "2026-03-12T10:36:04.625030351Z"
     description: Lightweight read-only Kubernetes monitoring agent
-    digest: b8e2fe3b10bc79117859e595078a356f35553a6d619fc7c6fa0066590c9b10f1
+    digest: a677a4fdad36ffe87c4f17cf09782f282f4990259395fa4f623b51b29a96d9f2
     name: k8s-dashboard-agent
     urls:
     - https://dhruvmistry2000.github.io/kubepulse/k8s-dashboard-agent-0.1.0.tgz
     version: 0.1.0
-generated: "2026-03-06T11:20:11.845016759Z"
+generated: "2026-03-12T10:36:04.624567499Z"
