@@ -119,7 +119,8 @@ kubepulse/
         ├── clusterrole.yaml
         ├── clusterrolebinding.yaml
         ├── secret.yaml
-        └── service.yaml
+        ├── service.yaml
+        └── poddisruptionbudget.yaml
 ```
 
 ---
