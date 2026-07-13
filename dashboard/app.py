@@ -1,9 +1,9 @@
 """
 K8s Dashboard - Central hub. Agents PUSH data TO this dashboard.
 
-- On startup: read or generate SECRET_KEY; in-memory stores for clusters and pending tokens.
-- POST /api/register: agent registers with one-time token, receives SECRET_KEY.
-- POST /api/heartbeat: agent sends cluster data (X-Secret-Key).
+- On startup: read or generate SECRET_KEY; persistent cluster registry; in-memory live metrics.
+- POST /api/register: agent registers with one-time token, receives per-cluster credential.
+- POST /api/heartbeat: agent sends cluster data (X-Secret-Key = per-cluster credential).
 - GET /api/clusters, GET /api/cluster/<name>/*: browser and UI.
 - POST /api/generate-token: admin generates one-time registration token (ADMIN_KEY).
 """
@@ -16,6 +16,10 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from flask import Flask, render_template, jsonify, request
+
+from storage import RegistryStore
+from history import HistoryStore
+from pricing import PriceLookup, enrich_nodes_with_cost, compute_cost_summary
 
 app = Flask(__name__)
 
@@ -32,8 +36,13 @@ AGENT_IMAGE = os.environ.get(
     "dhruvmistry200/kubepulse-agent:latest",
 )
 
-# In-memory store: cluster_name -> { registered_at, last_seen, data, agent_version }
-clusters = {}
+# Persistent cluster registry (credentials hashed at rest)
+registry = RegistryStore()
+history = HistoryStore()
+_price_lookup = PriceLookup()
+
+# In-memory live metrics: cluster_name -> latest heartbeat data payload
+live_data = {}
 _clusters_lock = threading.Lock()
 
 # Pending one-time registration tokens: token_hex -> { cluster_name, created_at, expires_at, used }
@@ -116,47 +125,56 @@ def api_register():
         if not _cluster_sanitized(cluster_name):
             return jsonify({"error": "Invalid cluster name"}), 400
         entry["used"] = True
-        # Register cluster
-        now = _now()
-        with _clusters_lock:
-            if cluster_name in clusters:
-                return jsonify({"error": "Cluster name already registered"}), 409
-            body = request.get_json(silent=True) or {}
-            clusters[cluster_name] = {
-                "registered_at": now,
-                "last_seen": now,
-                "data": None,
-                "agent_version": body.get("agent_version", "?"),
-            }
-        print("INFO: Cluster '%s' successfully registered using registration token" % cluster_name, flush=True)
-        return jsonify({
-            "status": "registered",
-            "cluster_name": cluster_name,
-            "secret_key": SECRET_KEY,
-        }), 200
+    if registry.cluster_exists(cluster_name):
+        return jsonify({"error": "Cluster name already registered"}), 409
+    body = request.get_json(silent=True) or {}
+    try:
+        _, credential = registry.register_cluster(
+            cluster_name,
+            agent_version=body.get("agent_version", "?"),
+        )
+    except ValueError:
+        return jsonify({"error": "Cluster name already registered"}), 409
+    print(
+        "INFO: Cluster '%s' successfully registered using registration token" % cluster_name,
+        flush=True,
+    )
+    return jsonify({
+        "status": "registered",
+        "cluster_name": cluster_name,
+        "cluster_credential": credential,
+        # Backward-compatible alias for older agents during rollout.
+        "secret_key": credential,
+    }), 200
 
 
 @app.route("/api/heartbeat", methods=["POST"])
 def api_heartbeat():
     key = request.headers.get("X-Secret-Key", "").strip()
-    if not key or key != SECRET_KEY:
+    if not key:
         return jsonify({"error": "Unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     cluster_name = (body.get("cluster_name") or "").strip()
     if not cluster_name:
         return jsonify({"error": "Missing cluster_name"}), 400
-    now = _now()
+
+    authorized = registry.verify_credential(cluster_name, key)
+    # Legacy fallback: accept global SECRET_KEY for clusters registered before per-cluster creds.
+    if not authorized and key == SECRET_KEY and registry.cluster_exists(cluster_name):
+        authorized = True
+    if not authorized:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    agent_version = body.get("agent_version")
+    registry.touch_cluster(cluster_name, agent_version=agent_version)
+    data = body.get("data") or {}
+    nodes = data.get("nodes") or []
+    enrich_nodes_with_cost(nodes, _price_lookup)
+    data["nodes"] = nodes
+    data["cost"] = compute_cost_summary(nodes)
     with _clusters_lock:
-        if cluster_name not in clusters:
-            # Allow heartbeat for not-yet-registered (e.g. agent had SECRET_KEY from previous run)
-            clusters[cluster_name] = {
-                "registered_at": now,
-                "last_seen": now,
-                "data": None,
-                "agent_version": body.get("agent_version", "?"),
-            }
-        clusters[cluster_name]["last_seen"] = now
-        clusters[cluster_name]["data"] = body.get("data")
+        live_data[cluster_name] = data
+    history.record_heartbeat(cluster_name, nodes, data.get("cost"))
     return jsonify({"status": "ok"}), 200
 
 
@@ -170,7 +188,7 @@ def api_generate_token():
     if not _cluster_sanitized(cluster_name):
         return jsonify({"error": "Invalid cluster name. Use only letters, numbers, hyphens and underscores, max 40 characters."}), 400
     with _clusters_lock:
-        if cluster_name in clusters:
+        if registry.cluster_exists(cluster_name):
             return jsonify({"error": "Cluster name already registered. Choose a different name."}), 409
     _cleanup_pending_tokens()
     token = secrets.token_hex(32)
@@ -223,10 +241,12 @@ def api_delete_cluster(cluster_name):
     - Removes any pending tokens created for that cluster name
     """
     cluster_name = (cluster_name or "").strip()
+    if not registry.delete_cluster(cluster_name):
+        return jsonify({"error": "Cluster not found"}), 404
+
     with _clusters_lock:
-        if cluster_name not in clusters:
-            return jsonify({"error": "Cluster not found"}), 404
-        del clusters[cluster_name]
+        live_data.pop(cluster_name, None)
+    history.delete_cluster(cluster_name)
 
     # Also remove any pending tokens that were generated for this cluster name.
     # (We clean up by cluster_name, not token string, per requirements.)
@@ -268,39 +288,51 @@ def api_config():
 
 @app.route("/api/clusters")
 def api_clusters():
-    with _clusters_lock:
-        now = _now()
-        result = []
-        for name, c in clusters.items():
-            last_seen = c.get("last_seen")
-            last_seen_ts = last_seen.timestamp() if last_seen else 0
-            age_seconds = (now - last_seen).total_seconds() if last_seen else 999999
-            result.append({
-                "name": name,
-                "last_seen": last_seen.isoformat() if last_seen else None,
-                "agent_version": c.get("agent_version"),
-                "registered_at": c["registered_at"].isoformat() if c.get("registered_at") else None,
-                "is_healthy": age_seconds <= HEALTHY_SECONDS,
-                "summary": (c.get("data") or {}).get("summary"),
-            })
+    now = _now()
+    result = []
+    for name in registry.list_cluster_names():
+        entry = registry.get(name)
+        last_seen = _parse_registry_time(entry.get("lastSeen")) if entry else None
+        age_seconds = (now - last_seen).total_seconds() if last_seen else 999999
+        with _clusters_lock:
+            data = live_data.get(name)
+        result.append({
+            "name": name,
+            "last_seen": last_seen.isoformat() if last_seen else None,
+            "agent_version": entry.get("agent_version") if entry else None,
+            "registered_at": entry.get("createdAt") if entry else None,
+            "is_healthy": age_seconds <= HEALTHY_SECONDS,
+            "summary": (data or {}).get("summary"),
+        })
     return jsonify(result), 200
+
+
+def _parse_registry_time(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 def _cluster_data(cluster_name, key):
     """Get a section of cluster data; return 404 if cluster missing."""
+    if not registry.cluster_exists(cluster_name):
+        return None, 404
     with _clusters_lock:
-        if cluster_name not in clusters:
-            return None, 404
-        c = clusters[cluster_name]
-        data = c.get("data")
-        if data is None:
-            return {"items": [], "message": "Waiting for first heartbeat..."}, 200
-        if key == "summary":
-            return data.get("summary") or {}, 200
-        items = data.get(key)
-        if items is None:
-            return {"items": [], "message": "No data"}, 200
-        return {"items": items}, 200
+        data = live_data.get(cluster_name)
+    if data is None:
+        return {"items": [], "message": "Waiting for first heartbeat..."}, 200
+    if key == "summary":
+        return data.get("summary") or {}, 200
+    items = data.get(key)
+    if items is None:
+        return {"items": [], "message": "No data"}, 200
+    return {"items": items}, 200
 
 
 @app.route("/api/cluster/<cluster_name>/nodes")
@@ -365,6 +397,49 @@ def api_cluster_summary(cluster_name):
     if out is None:
         return jsonify({"error": "Cluster not found"}), 404
     return jsonify(out), status
+
+
+@app.route("/api/cluster/<cluster_name>/cost")
+def api_cluster_cost(cluster_name):
+    if not registry.cluster_exists(cluster_name):
+        return jsonify({"error": "Cluster not found"}), 404
+    with _clusters_lock:
+        data = live_data.get(cluster_name)
+    if not data:
+        return jsonify({"message": "Waiting for first heartbeat...", "cost": {}}), 200
+    return jsonify({"cost": data.get("cost") or {}}), 200
+
+
+@app.route("/api/cost")
+def api_fleet_cost():
+    with _clusters_lock:
+        snapshot = dict(live_data)
+    return jsonify(history.get_fleet_cost_from_live(snapshot)), 200
+
+
+@app.route("/api/cluster/<cluster_name>/scaling")
+def api_cluster_scaling(cluster_name):
+    if not registry.cluster_exists(cluster_name):
+        return jsonify({"error": "Cluster not found"}), 404
+    return jsonify({"scaling": history.get_scaling(cluster_name)}), 200
+
+
+@app.route("/api/scaling")
+def api_fleet_scaling():
+    return jsonify({"scaling": history.get_scaling()}), 200
+
+
+@app.route("/api/retired-nodes")
+def api_retired_nodes():
+    cluster = (request.args.get("cluster") or "").strip() or None
+    return jsonify({"items": history.get_retired_nodes(cluster)}), 200
+
+
+@app.route("/api/cluster/<cluster_name>/retired-nodes")
+def api_cluster_retired_nodes(cluster_name):
+    if not registry.cluster_exists(cluster_name):
+        return jsonify({"error": "Cluster not found"}), 404
+    return jsonify({"items": history.get_retired_nodes(cluster_name)}), 200
 
 
 if __name__ == "__main__":

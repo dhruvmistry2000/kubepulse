@@ -51,7 +51,7 @@ KubePulse is designed to be simple to deploy, easy to operate, and practical for
 
 KubePulse has two components:
 
-- **Dashboard** — A Flask web application hosted on any HTTPS-accessible server (Cloud Run, VM + nginx, or Kubernetes). It serves the browser UI, issues registration tokens, and stores the latest cluster state in memory.
+- **Dashboard** — A Flask web application hosted on any HTTPS-accessible server (Cloud Run, VM + nginx, or Kubernetes). It serves the browser UI, issues registration tokens, persists the cluster registry (file/GCS), computes node cost, and keeps live metrics in memory.
 - **Agent** — A lightweight Flask application deployed via Helm into each monitored cluster. It reads the Kubernetes API using a read-only ServiceAccount, then pushes data to the dashboard every 30 seconds via `POST /api/heartbeat`.
 
 ```

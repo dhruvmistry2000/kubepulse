@@ -1,0 +1,17 @@
+{{- if and (eq .Values.persistence.mode "file") .Values.persistence.fileVolume.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "k8s-dashboard-agent.fullname" . }}-state
+  labels:
+    {{- include "k8s-dashboard-agent.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.fileVolume.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.fileVolume.size }}
+  {{- if .Values.persistence.fileVolume.storageClass }}
+  storageClassName: {{ .Values.persistence.fileVolume.storageClass | quote }}
+  {{- end }}
+{{- end }}

@@ -23,11 +23,6 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: REGISTRATION_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "k8s-dashboard-agent.fullname" . }}
-                  key: REGISTRATION_TOKEN
             - name: DASHBOARD_URL
               valueFrom:
                 secretKeyRef:
@@ -38,11 +33,28 @@ spec:
                 secretKeyRef:
                   name: {{ include "k8s-dashboard-agent.fullname" . }}
                   key: CLUSTER_NAME
-            - name: SECRET_KEY
+            - name: PERSISTENCE_MODE
+              value: {{ .Values.persistence.mode | quote }}
+            - name: STATE_SECRET_NAME
+              value: {{ .Values.stateSecretName | quote }}
+            - name: PERSISTENCE_FILE_PATH
+              value: {{ .Values.persistence.filePath | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.registrationToken }}
+            - name: REGISTRATION_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "k8s-dashboard-agent.fullname" . }}
-                  key: SECRET_KEY
+                  key: REGISTRATION_TOKEN
+            {{- end }}
+          volumeMounts:
+            {{- if eq .Values.persistence.mode "file" }}
+            - name: agent-state
+              mountPath: {{ .Values.persistence.mountPath | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -57,3 +69,13 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        {{- if eq .Values.persistence.mode "file" }}
+        - name: agent-state
+          {{- if .Values.persistence.fileVolume.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "k8s-dashboard-agent.fullname" . }}-state
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
