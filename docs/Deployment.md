@@ -163,7 +163,7 @@ kubectl apply -f \
 - **Use separate `SECRET_KEY` and `ADMIN_KEY` values.** Don't rely on the default of `ADMIN_KEY = SECRET_KEY`.
 - **Use strong, randomly generated secrets.** At least 32 random characters for `SECRET_KEY`.
 - **Pin image tags in production.** Avoid `latest` in production Helm values. Use a specific version tag.
-- **Enable dashboard persistence** (if needed): The current release stores cluster data in memory. A dashboard restart clears all state; agents will re-register automatically on their next heartbeat.
+- **Enable dashboard persistence:** Set `STORAGE_BACKEND=file` (with a mounted volume) or `STORAGE_BACKEND=gcs` on Cloud Run. Without persistence, the cluster registry and scaling history are lost on restart; agents with persisted credentials resume heartbeats without re-registering.
 - **Monitor the dashboard itself** using your existing observability stack (uptime checks, Cloud Run metrics, etc.).
 - **Restrict `ADMIN_KEY` access.** The admin key can generate tokens that give agents permanent access to push data. Protect it accordingly.
 
@@ -174,9 +174,11 @@ kubectl apply -f \
 ### Upgrade the agent
 
 ```bash
-# Pull latest image defaults, retain existing Helm values
-helm upgrade kubepulse-agent ./helm --reuse-values
+# Retain existing Helm values — no new registration token required
+helm upgrade kubepulse-agent ./helm --reuse-values --set image.tag=NEW_TAG
 ```
+
+The agent loads its per-cluster credential from the Kubernetes Secret (default) and skips registration.
 
 ### Upgrade the dashboard (Cloud Run)
 

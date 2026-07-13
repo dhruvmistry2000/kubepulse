@@ -249,6 +249,17 @@
     .tab.active { background: var(--accent); color: var(--bg-dark); border-color: var(--accent); }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
+    .provider-icon { font-size: 1rem; margin-right: 4px; }
+    .pricing-estimated { color: var(--yellow); font-size: 0.75rem; }
+    .pricing-unpriced { color: var(--red); font-size: 0.75rem; }
+    .cost-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .cost-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .cost-card .label { font-size: 0.75rem; color: var(--text-muted); }
+    .cost-card .value { font-size: 1.25rem; font-weight: 600; margin-top: 4px; }
+    .scaling-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding: 12px 0; }
+    .scaling-bar { flex: 1; min-width: 8px; background: var(--accent); border-radius: 3px 3px 0 0; opacity: 0.85; }
+    .filter-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+    .filter-row select { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; }
     .filter-input {
       width: 100%;
       max-width: 320px;
@@ -836,7 +847,8 @@
   </div>
 
   <script>
-    const TAB_IDS = ['graphs', 'nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps'];
+    const TAB_IDS = ['graphs', 'nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps', 'cost', 'scaling', 'retired'];
+    const RESOURCE_TAB_IDS = ['nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps'];
     const CLUSTERS_POLL_MS = 10000;
     const CLUSTER_DATA_POLL_MS = 15000;
     const ADD_CLUSTER_POLL_MS = 5000;
@@ -907,6 +919,7 @@
     let hideSystemNamespaces = true;
     let selectedNamespace = 'all';
     let labelFilter = ''; // key=value format
+    let nodeProviderFilter = 'all';
 
     // Sidebar collapsed state (persisted in localStorage).
     let sidebarCollapsed = false;
@@ -1025,6 +1038,65 @@
       const pct = (used / alloc) * 100;
       if (!Number.isFinite(pct)) return null;
       return Math.max(0, Math.min(100, Math.round(pct)));
+    }
+
+    function providerIcon(provider) {
+      const map = { gcp: '☁️ GCP', aws: '🟠 AWS', azure: '🔷 Azure', onprem: '🏢 On-prem' };
+      return map[provider] || escapeHtml(provider || '—');
+    }
+
+    function formatUsd(val, digits = 2) {
+      if (val == null || !Number.isFinite(val)) return '—';
+      return '$' + Number(val).toFixed(digits);
+    }
+
+    function formatNodeCpuCell(usageRaw, allocatableRaw, capacityRaw) {
+      let usedMillis = null;
+      if (usageRaw) {
+        const s = String(usageRaw).trim();
+        if (s.endsWith('n')) usedMillis = parseFloat(s.slice(0, -1)) / 1e6;
+        else usedMillis = cpuToMillis(s);
+      }
+      const allocMillis = cpuToMillis(allocatableRaw);
+      const capMillis = cpuToMillis(capacityRaw);
+      if (usedMillis == null || allocMillis == null || allocMillis === 0) {
+        if (allocMillis != null) return `<span style="color:var(--text-muted);">${(allocMillis/1000).toFixed(0)} alloc / ${capMillis ? (capMillis/1000).toFixed(0) : '?'} cap</span>`;
+        return '—';
+      }
+      const pct = Math.min(100, Math.round((usedMillis / allocMillis) * 100));
+      const usedCores = (usedMillis / 1000).toFixed(2);
+      const allocCores = (allocMillis / 1000).toFixed(0);
+      const capCores = capMillis ? (capMillis / 1000).toFixed(0) : '?';
+      const color = pct > 80 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+      return `<div style="min-width:130px;"><div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-bottom:3px;"><span style="color:${color};font-weight:600;">${pct}%</span><span style="color:var(--text-muted);">${usedCores}/${allocCores} (${capCores})</span></div><div class="progress"><div class="progress-bar-fill ${pct > 80 ? 'danger' : pct >= 60 ? 'warn' : ''}" style="width:${pct}%;"></div></div></div>`;
+    }
+
+    function formatNodeMemoryCell(usageRaw, allocatableRaw, capacityRaw) {
+      const usedBytes = memoryToBytes(usageRaw);
+      const allocBytes = memoryToBytes(allocatableRaw);
+      const capBytes = memoryToBytes(capacityRaw);
+      if (usedBytes == null || allocBytes == null || allocBytes === 0) {
+        if (allocBytes != null) return `<span style="color:var(--text-muted);">${(allocBytes/(1024**3)).toFixed(1)} alloc GB</span>`;
+        return '—';
+      }
+      const pct = Math.min(100, Math.round((usedBytes / allocBytes) * 100));
+      const usedGB = (usedBytes / (1024 ** 3)).toFixed(2);
+      const allocGB = (allocBytes / (1024 ** 3)).toFixed(1);
+      const capGB = capBytes ? (capBytes / (1024 ** 3)).toFixed(1) : '?';
+      const color = pct > 80 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+      return `<div style="min-width:140px;"><div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-bottom:3px;"><span style="color:${color};font-weight:600;">${pct}%</span><span style="color:var(--text-muted);">${usedGB}/${allocGB} (${capGB})</span></div><div class="progress"><div class="progress-bar-fill ${pct > 80 ? 'danger' : pct >= 60 ? 'warn' : ''}" style="width:${pct}%;"></div></div></div>`;
+    }
+
+    function formatPricingCell(n) {
+      if (!n.priced || n.hourlyUsd == null) {
+        return '<span class="pricing-unpriced">unpriced</span>';
+      }
+      const src = (n.pricingSource || '').startsWith('usage')
+        ? ' <span class="pricing-estimated">(usage)</span>'
+        : n.pricingSource === 'estimated'
+          ? ' <span class="pricing-estimated">(est.)</span>'
+          : '';
+      return `${formatUsd(n.hourlyUsd, 4)}/hr<br><span style="color:var(--text-muted);font-size:0.75rem;">${formatUsd(n.monthlyUsd)}/mo</span>${src}`;
     }
 
     function formatCpuCell(usageRaw, capacityRaw) {
@@ -2213,10 +2285,14 @@
 
     function renderNodes(items) {
       const filter = (el('filter-nodes') || {}).value || '';
-      // Nodes are unaffected by the global namespace/label filters.
-      const list = (items || []).filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
-      return buildTable(
-        ['', 'Name', 'Status', 'Roles', 'CPU', 'Memory', 'Age'],
+      const provFilter = nodeProviderFilter || 'all';
+      const list = (items || [])
+        .filter(i => provFilter === 'all' || (i.provider || 'onprem') === provFilter)
+        .filter(i => !filter || JSON.stringify(i).toLowerCase().includes(filter.toLowerCase()));
+      const providers = [...new Set((items || []).map(i => i.provider || 'onprem'))].sort();
+      const provSelect = `<div class="filter-row"><label style="font-size:0.8rem;color:var(--text-muted);">Provider</label><select id="nodeProviderFilter">${['all', ...providers].map(p => `<option value="${escapeAttr(p)}" ${p === provFilter ? 'selected' : ''}>${p === 'all' ? 'All providers' : providerIcon(p)}</option>`).join('')}</select></div>`;
+      const table = buildTable(
+        ['', 'Name', 'Provider', 'Instance', 'Region', 'Status', 'Pods', 'CPU', 'Memory', '$/hr', 'Age'],
         list,
         n => {
           const rowId = `nodes:${n.name}`;
@@ -2224,19 +2300,100 @@
           <tr data-rowid="${escapeAttr(rowId)}" data-name="${escapeAttr(n.name)}" data-namespace="">
             <td class="chev-col"><span class="chev">▶</span></td>
             <td>${escapeHtml(n.name)}</td>
+            <td>${providerIcon(n.provider)}</td>
+            <td>${escapeHtml(n.instanceType || '—')}</td>
+            <td>${escapeHtml(n.region || '—')}</td>
             <td><span class="badge ${nodeStatusClass(n.status)}">${escapeHtml(n.status)}</span></td>
-            <td>${escapeHtml((n.roles || []).join(', ') || '—')}</td>
-            <td>${formatCpuCell(n.cpuUsage, n.cpuCapacity)}</td>
-            <td>${formatMemoryCell(n.memoryUsage, n.memoryCapacity)}</td>
+            <td>${n.podCount ?? '—'}</td>
+            <td>${formatNodeCpuCell(n.cpuUsage, n.allocatableCPU, n.cpuCapacity)}</td>
+            <td>${formatNodeMemoryCell(n.memoryUsage, n.allocatableMemory, n.memoryCapacity)}</td>
+            <td>${formatPricingCell(n)}</td>
             <td>${formatAge(n.age)}</td>
           </tr>
           <tr class="detail-row" data-detailfor="${escapeAttr(rowId)}">
-            <td colspan="7"><div class="detail-panel">${renderNodeDetails(n)}</div></td>
+            <td colspan="11"><div class="detail-panel">${renderNodeDetails(n)}</div></td>
           </tr>
           `;
         }
       );
+      return provSelect + table;
     }
+
+    function renderCostView(cost, fleetCost) {
+      const c = cost || {};
+      const f = fleetCost || {};
+      const byProvider = c.byProvider || {};
+      const fleetByProvider = f.byProvider || {};
+      const fleetByCluster = f.byCluster || {};
+      const provRows = Object.entries(byProvider).map(([p, d]) => `
+        <tr><td>${providerIcon(p)}</td><td>${d.nodeCount ?? 0}</td><td>${formatUsd(d.hourlyUsd, 4)}</td><td>${formatUsd(d.monthlyUsd)}</td></tr>
+      `).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No priced nodes</td></tr>';
+      const fleetProvRows = Object.entries(fleetByProvider).map(([p, d]) => `
+        <tr><td>${providerIcon(p)}</td><td>${d.nodeCount ?? 0}</td><td>${formatUsd(d.hourlyUsd, 4)}</td><td>${formatUsd(d.monthlyUsd)}</td></tr>
+      `).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No priced nodes</td></tr>';
+      const clusterRows = Object.entries(fleetByCluster).map(([name, d]) => `
+        <tr>
+          <td>${escapeHtml(name)}</td>
+          <td>${d.pricedNodes ?? 0}</td>
+          <td>${d.unpricedNodes ?? 0}</td>
+          <td>${formatUsd(d.hourlyUsd, 4)}</td>
+          <td>${formatUsd(d.monthlyUsd)}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No clusters yet</td></tr>';
+      const clusterCount = Object.keys(fleetByCluster).length;
+      return `
+        <h3 style="font-size:0.95rem;margin:0 0 8px;">Fleet overview</h3>
+        <div class="cost-card-grid">
+          <div class="cost-card"><div class="label">Fleet $/hour</div><div class="value">${formatUsd(f.hourlyUsd, 4)}</div></div>
+          <div class="cost-card"><div class="label">Fleet $/month (×730)</div><div class="value">${formatUsd(f.monthlyUsd)}</div></div>
+          <div class="cost-card"><div class="label">Clusters</div><div class="value">${clusterCount}</div></div>
+        </div>
+        <table class="data-table" style="margin-bottom:20px;"><thead><tr><th>Cluster</th><th>Priced</th><th>Unpriced</th><th>$/hr</th><th>$/mo</th></tr></thead><tbody>${clusterRows}</tbody></table>
+        <h3 style="font-size:0.95rem;margin:0 0 8px;">Fleet by provider</h3>
+        <table class="data-table" style="margin-bottom:24px;"><thead><tr><th>Provider</th><th>Nodes</th><th>$/hr</th><th>$/mo</th></tr></thead><tbody>${fleetProvRows}</tbody></table>
+        <h3 style="font-size:0.95rem;margin:0 0 8px;">Selected cluster: ${escapeHtml(selectedCluster || '—')}</h3>
+        <div class="cost-card-grid">
+          <div class="cost-card"><div class="label">Cluster $/hour</div><div class="value">${formatUsd(c.hourlyUsd, 4)}</div></div>
+          <div class="cost-card"><div class="label">Cluster $/month (×730)</div><div class="value">${formatUsd(c.monthlyUsd)}</div></div>
+          <div class="cost-card"><div class="label">Priced nodes</div><div class="value">${c.pricedNodes ?? 0}</div></div>
+          <div class="cost-card"><div class="label">Unpriced nodes</div><div class="value" style="color:${(c.unpricedNodes||0) > 0 ? 'var(--yellow)' : 'inherit'}">${c.unpricedNodes ?? 0}</div></div>
+        </div>
+        <table class="data-table"><thead><tr><th>Provider</th><th>Nodes</th><th>$/hr</th><th>$/mo</th></tr></thead><tbody>${provRows}</tbody></table>
+      `;
+    }
+
+    function renderScalingView(scalingData) {
+      const points = (scalingData && scalingData[selectedCluster]) || [];
+      if (!points.length) return '<p style="color:var(--text-muted);">No scaling history yet. Points are recorded every ~5 minutes.</p>';
+      const max = Math.max(...points.map(p => p.nodeCount || 0), 1);
+      const bars = points.slice(-60).map(p => {
+        const h = Math.max(4, Math.round(((p.nodeCount || 0) / max) * 100));
+        const ts = p.ts ? new Date(p.ts).toLocaleString() : '';
+        return `<div class="scaling-bar" style="height:${h}%;" title="${escapeAttr(ts)}: ${p.nodeCount} nodes"></div>`;
+      }).join('');
+      const latest = points[points.length - 1];
+      return `<p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:8px;">Node count over time for <strong>${escapeHtml(selectedCluster)}</strong> — latest: ${latest.nodeCount} nodes</p><div class="scaling-chart">${bars}</div>`;
+    }
+
+    function renderRetiredNodes(items) {
+      const list = items || [];
+      return buildTable(
+        ['Node', 'Cluster', 'Provider', 'Instance', 'First seen', 'Last seen', 'Peak CPU', 'Peak RAM', 'Accrued cost'],
+        list,
+        r => `<tr>
+          <td>${escapeHtml(r.nodeName || '—')}</td>
+          <td>${escapeHtml(r.cluster || '—')}</td>
+          <td>${providerIcon(r.provider)}</td>
+          <td>${escapeHtml(r.instanceType || '—')}</td>
+          <td>${r.firstSeen ? formatAge(r.firstSeen) : '—'}</td>
+          <td>${r.lastSeen ? formatAge(r.lastSeen) : '—'}</td>
+          <td>${r.peakCpuPct != null ? r.peakCpuPct + '%' : '—'}</td>
+          <td>${r.peakMemPct != null ? r.peakMemPct + '%' : '—'}</td>
+          <td>${formatUsd(r.accruedCostUsd, 4)}</td>
+        </tr>`
+      );
+    }
+
     function renderPods(items) {
       const filter = (el('filter-pods') || {}).value || '';
       const list = (items || [])
@@ -2853,6 +3010,19 @@
           </div>
 
           <div class="detail-item">
+            <div class="title">Cloud Provider</div>
+            <div class="value">${providerIcon(n.provider)} — ${escapeHtml(n.instanceType || '—')} — ${escapeHtml(n.region || '—')}${n.zone ? ' / ' + escapeHtml(n.zone) : ''}</div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Cost estimate</div>
+            <div class="value">${formatPricingCell(n)} <span style="color:var(--text-muted);">(${escapeHtml(n.pricingSource || 'unpriced')})</span></div>
+          </div>
+          <div class="detail-item">
+            <div class="title">Pods on node</div>
+            <div class="value">${n.podCount ?? '—'}</div>
+          </div>
+
+          <div class="detail-item">
             <div class="title">OS Image</div>
             <div class="value">${escapeHtml(info.osImage || '—')}</div>
           </div>
@@ -3324,6 +3494,14 @@
       let html = '';
       if (tabId === 'graphs') {
         html = renderGraphsTab();
+      } else if (tabId === 'cost') {
+        const clusterCost = (data && data.cost) || data || {};
+        html = renderCostView(clusterCost, _cache.fleetCost || {});
+      } else if (tabId === 'scaling') {
+        html = renderScalingView((data && data.scaling) || {});
+      } else if (tabId === 'retired') {
+        const items = (data && data.items) ? data.items : [];
+        html = renderRetiredNodes(items);
       } else if (data && data.error) {
         html = '<p style="color: var(--text-muted);">' + escapeHtml(data.error) + '</p>';
       } else if (data && data.message) {
@@ -3339,6 +3517,13 @@
         else if (tabId === 'configmaps') html = renderConfigMaps(items);
       }
       wrap.innerHTML = html;
+      if (tabId === 'nodes') {
+        const sel = el('nodeProviderFilter');
+        if (sel) sel.addEventListener('change', () => {
+          nodeProviderFilter = sel.value;
+          renderTabContent('nodes', _cache.nodes);
+        });
+      }
       attachExpandableRows(tabId);
     }
 
@@ -3346,15 +3531,24 @@
     async function fetchClusterData() {
       if (!selectedCluster) return;
       try {
-        const TAB_IDS_TO_FETCH = TAB_IDS.filter(id => id !== 'graphs');
-        const [summaryRes, ...rest] = await Promise.all([
-          fetch('/api/cluster/' + encodeURIComponent(selectedCluster) + '/summary'),
-          ...TAB_IDS_TO_FETCH.map(id => fetch('/api/cluster/' + encodeURIComponent(selectedCluster) + '/' + id)),
+        const TAB_IDS_TO_FETCH = RESOURCE_TAB_IDS;
+        const enc = encodeURIComponent(selectedCluster);
+        const [summaryRes, ...resourceResults, costRes, scalingRes, retiredRes, fleetCostRes] = await Promise.all([
+          fetch('/api/cluster/' + enc + '/summary'),
+          ...TAB_IDS_TO_FETCH.map(id => fetch('/api/cluster/' + enc + '/' + id)),
+          fetch('/api/cluster/' + enc + '/cost'),
+          fetch('/api/cluster/' + enc + '/scaling'),
+          fetch('/api/cluster/' + enc + '/retired-nodes'),
+          fetch('/api/cost'),
         ]);
         const summary = summaryRes.ok ? await summaryRes.json() : {};
         _cache.summary = summary;
-        const results = await Promise.all(rest.map(r => r.ok ? r.json() : {}));
+        const results = await Promise.all(resourceResults.map(r => r.ok ? r.json() : {}));
         TAB_IDS_TO_FETCH.forEach((id, i) => { _cache[id] = results[i] || {}; });
+        _cache.cost = costRes.ok ? await costRes.json() : {};
+        _cache.scaling = scalingRes.ok ? await scalingRes.json() : {};
+        _cache.retired = retiredRes.ok ? await retiredRes.json() : {};
+        _cache.fleetCost = fleetCostRes.ok ? await fleetCostRes.json() : {};
         lastClusterFetchTime = Date.now();
         const clusterMeta = clustersList.find(c => c.name === selectedCluster);
         const lastSeen = clusterMeta && clusterMeta.last_seen ? new Date(clusterMeta.last_seen).getTime() : 0;
@@ -3382,13 +3576,13 @@
     }
 
     function initResourceTabs() {
-      const labels = { graphs: 'Graphs 📊', nodes: 'Nodes', pods: 'Pods', deployments: 'Deployments', services: 'Services', ingresses: 'Ingresses', namespaces: 'Namespaces', configmaps: 'ConfigMaps' };
+      const labels = { graphs: 'Graphs 📊', nodes: 'Nodes', pods: 'Pods', deployments: 'Deployments', services: 'Services', ingresses: 'Ingresses', namespaces: 'Namespaces', configmaps: 'ConfigMaps', cost: 'Cost 💰', scaling: 'Scaling', retired: 'Retired Nodes' };
       const tabsEl = el('tabs');
       tabsEl.innerHTML = TAB_IDS.map(id => `<button class="tab" data-tab="${id}" type="button">${labels[id]}</button>`).join('');
       const panelsEl = el('tabPanels');
       panelsEl.innerHTML = TAB_IDS.map(id => `
         <div class="tab-panel" id="tab-${id}">
-          <input type="text" class="filter-input" id="filter-${id}" placeholder="Filter ${labels[id]}..." ${id === 'graphs' ? 'style="display:none;"' : ''} />
+          <input type="text" class="filter-input" id="filter-${id}" placeholder="Filter ${labels[id]}..." ${['graphs', 'cost', 'scaling', 'retired'].includes(id) ? 'style="display:none;"' : ''} />
           <div class="table-panel"></div>
         </div>
       `).join('');

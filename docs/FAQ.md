@@ -25,19 +25,21 @@ Yes. The agent only needs **outbound** HTTPS access (port 443) to reach the dash
 
 **Q: What happens if the dashboard restarts?**
 
-The dashboard stores cluster state in memory. On restart, all cluster data is cleared. However, agents will automatically re-register on their next heartbeat cycle (within 30 seconds), and the cluster will reappear in the sidebar without any manual intervention.
+With persistence enabled (default `STORAGE_BACKEND=file`, or `gcs` on Cloud Run), the **cluster registry** and scaling history survive restarts. Live metrics refill on the next agent heartbeat (~30s). Agents do **not** need to re-register.
+
+Without durable storage, the registry is wiped and heartbeats fail auth until you restore the registry or re-register each agent with a new token. Always use file (with a volume) or GCS in production.
 
 ---
 
 **Q: What happens if a registration token expires?**
 
-Tokens are valid for 10 minutes. If a token expires before running `helm install`, generate a new token in the dashboard and use `helm upgrade --reuse-values` instead of a fresh `helm install`.
+Tokens are valid for 10 minutes. If a token expires before the first `helm install`, generate a new token and install again. After a successful registration, upgrades use `helm upgrade --reuse-values` with **no new token** (credential is persisted in-cluster).
 
 ---
 
 **Q: Does the agent write anything to the Kubernetes API?**
 
-No. The agent only reads from the Kubernetes API using a read-only `ClusterRole` with `get`, `list`, and `watch` verbs. It never creates, updates, or deletes any Kubernetes resources.
+Almost nothing. The ClusterRole is read-only (`get`, `list`, `watch`). With default `persistence.mode=secret`, the agent also creates/updates a single namespaced Secret (`kubepulse-agent-state`) to store its credential across restarts.
 
 ---
 
@@ -46,6 +48,18 @@ No. The agent only reads from the Kubernetes API using a read-only `ClusterRole`
 - **Agent → Dashboard:** Every 30 seconds (heartbeat).
 - **Browser → Dashboard:** Every 10–15 seconds (polling).
 - **Stale data threshold:** If no heartbeat is received for 90+ seconds, the UI shows a stale data warning.
+
+---
+
+**Q: Where is cost calculated?**
+
+On the **dashboard**. Agents send CPU/RAM and node metadata only. The dashboard applies the price map (and optional public list-price APIs) and exposes Cost / Nodes tabs plus `/api/cost`.
+
+---
+
+**Q: Do I need cloud billing credentials for cost?**
+
+No. Pricing uses a static map, optional public Azure/AWS price APIs, and usage-based rates. No GCP/AWS/Azure billing account keys are required.
 
 ---
 
@@ -88,7 +102,7 @@ helm upgrade kubepulse-agent ./helm \
   --reuse-values
 ```
 
-Note that the old cluster name entry will remain in the dashboard until removed manually via the UI or the delete API endpoint.
+Note that the old cluster name entry will remain in the dashboard until removed manually via the UI or the delete API endpoint. You may also need a new registration if the stored credential is bound to the previous name.
 
 ---
 

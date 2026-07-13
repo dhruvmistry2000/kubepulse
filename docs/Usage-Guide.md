@@ -41,6 +41,25 @@ Each resource type (Pods, Deployments, Nodes, Services) has its own table with:
 - **System namespace filter** — toggle to show/hide `kube-system` and similar namespaces
 - **Label filter** — filter resources by Kubernetes labels
 
+### Nodes tab
+
+- Provider, instance type, region/zone
+- Provider filter dropdown
+- Per-node `$/hr` and `$/mo` (computed on the dashboard)
+
+### Cost tab
+
+- **Fleet overview** — total $/hr and $/mo across all clusters, plus per-cluster and per-provider roll-ups
+- **Selected cluster** — cost cards and provider breakdown for the cluster in the sidebar
+
+### Scaling tab
+
+Node-count timeline for the selected cluster (~5 minute resolution).
+
+### Retired Nodes tab
+
+Nodes that disappeared from heartbeats, with lifetime, peak CPU/RAM, and accrued cost.
+
 ---
 
 ## REST API
@@ -63,7 +82,8 @@ Content-Type: application/json
 **Response:**
 ```json
 {
-  "secret_key": "<secret_key>"
+  "cluster_credential": "<per-cluster-credential>",
+  "secret_key": "<same-value-legacy-alias>"
 }
 ```
 
@@ -71,16 +91,20 @@ Content-Type: application/json
 ```
 POST /api/heartbeat
 Content-Type: application/json
-X-Secret-Key: <secret_key>
+X-Secret-Key: <cluster_credential>
 
 {
   "cluster_name": "production",
-  "nodes": [...],
-  "pods": [...],
-  "deployments": [...],
-  "services": [...]
+  "data": {
+    "nodes": [...],
+    "pods": [...],
+    "deployments": [...],
+    "services": [...]
+  }
 }
 ```
+
+The dashboard attaches cost fields to nodes and builds the cost summary before storing live state.
 
 ### Admin Endpoints
 
@@ -110,7 +134,15 @@ curl -X DELETE https://YOUR_DASHBOARD_URL/api/cluster/production \
 ### Browser Endpoints
 
 ```
-GET /api/data                   # All cluster data (latest heartbeat state)
+GET /api/clusters
+GET /api/cluster/<name>/summary
+GET /api/cluster/<name>/nodes
+GET /api/cluster/<name>/cost
+GET /api/cost                      # Fleet cost across all clusters
+GET /api/cluster/<name>/scaling
+GET /api/scaling
+GET /api/retired-nodes
+GET /api/cluster/<name>/retired-nodes
 GET /                           # Serves the single-page UI
 ```
 
@@ -138,8 +170,8 @@ curl -X DELETE https://YOUR_DASHBOARD_URL/api/cluster/staging \
 ### Upgrade the agent
 
 ```bash
-# Reuse existing values, pull latest image
-helm upgrade kubepulse-agent ./helm --reuse-values
+# Reuse existing values — no new registration token required
+helm upgrade kubepulse-agent ./helm --reuse-values --set image.tag=NEW_TAG
 ```
 
 ### Uninstall the agent
@@ -148,7 +180,7 @@ helm upgrade kubepulse-agent ./helm --reuse-values
 helm uninstall kubepulse-agent
 ```
 
-### Re-register after token expiry
+### Re-register after token expiry (first install only)
 
 If the token expired before running `helm install`:
 

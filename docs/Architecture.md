@@ -1,4 +1,3 @@
-
 # Architecture
 
 This page describes KubePulse's system design, its two core components, and how data flows from your clusters to your browser.
@@ -18,25 +17,26 @@ KubePulse is built around a **push-based model**. Instead of the dashboard reach
   │  Browser                                        │
   │  Polls dashboard every 10–15 seconds            │
   └──────────────────┬──────────────────────────────┘
-                     │ HTTPS (GET /api/data)
+                     │ HTTPS (GET /api/...)
                      ▼
   ┌─────────────────────────────────────────────────┐
   │  Dashboard  (Cloud Run / VM / Kubernetes)       │
   │  ─────────────────────────────────────────────  │
   │  • Serves the single-page web UI               │
-  │  • Stores latest cluster state in memory       │
+  │  • Persistent cluster registry (file or GCS)   │
+  │  • Live metrics in memory; history on disk/GCS │
+  │  • Computes node cost from agent resource data │
   │  • Issues one-time registration tokens         │
-  │  • Exposes REST API for agents and browser     │
   └──────────────────▲──────────────────────────────┘
                      │ POST /api/heartbeat every 30s
                      │ (outbound HTTPS only)
   ┌──────────────────┴──────────────────────────────┐
   │  Agent  (Helm chart, runs inside your cluster)  │
   │  ─────────────────────────────────────────────  │
-  │  • Reads K8s API via read-only ServiceAccount  │
-  │  • Collects nodes, pods, deployments, services │
-  │  • Pushes data to dashboard every 30 seconds   │
-  │  • Supports GKE, EKS, AKS                      │
+  │  • Reads K8s API via read-only ClusterRole     │
+  │  • Collects nodes, pods, metrics, provider info│
+  │  • Persists per-cluster credential (Secret)    │
+  │  • Pushes resource data only (no cost math)    │
   └─────────────────────────────────────────────────┘
 ```
 
@@ -48,33 +48,34 @@ KubePulse is built around a **push-based model**. Instead of the dashboard reach
 
 | File | Role |
 |---|---|
-| `dashboard/app.py` | Flask application: REST API, token issuance, in-memory state store |
-| `dashboard/templates/index.html` | Single-page UI: cluster sidebar, graphs, resource tables |
-| `dashboard/Dockerfile` | Container build definition for the dashboard image |
+| `dashboard/app.py` | Flask API: registration, heartbeats, UI APIs |
+| `dashboard/storage.py` | Persistent cluster registry (`file` / `gcs`) |
+| `dashboard/history.py` | Scaling timelines + retired-node history |
+| `dashboard/pricing.py` | Cost estimation from node resource data |
+| `dashboard/prices.json` | Static price map + per-provider usage rates |
+| `dashboard/templates/index.html` | SPA: sidebar, graphs, nodes, cost, scaling |
 
-The dashboard is **stateless** except for the in-memory cluster data. It does not use a database. If the dashboard restarts, agents will re-register on their next heartbeat cycle.
+Live metrics stay in memory for fast UI refresh. The **registry** and **history** are durable so dashboard restarts do not force re-registration.
 
 ### Agent (`agent/`)
 
 | File | Role |
 |---|---|
-| `agent/app.py` | Flask application: Kubernetes API client, registration, heartbeat sender |
-| `agent/Dockerfile` | Container build definition for the agent image |
+| `agent/app.py` | Collect cluster data and push heartbeats |
+| `agent/persistence.py` | Credential load/save (secret / file / memory) |
+| `agent/provider.py` | Cloud provider detection from Node objects |
 
-The agent runs inside your cluster as a `Deployment` with a read-only `ClusterRole`. It never writes anything to the Kubernetes API.
+The agent is intentionally lightweight: it does **not** look up prices or compute cost. Cost is attached on the dashboard at heartbeat time.
 
 ### Helm Chart (`helm/`)
 
 | File | Role |
 |---|---|
-| `helm/Chart.yaml` | Chart metadata (name, version, description) |
-| `helm/values.yaml` | Default configuration values |
-| `helm/templates/deployment.yaml` | Agent `Deployment` manifest |
-| `helm/templates/serviceaccount.yaml` | Dedicated `ServiceAccount` for the agent |
-| `helm/templates/clusterrole.yaml` | Read-only `ClusterRole` for K8s API access |
-| `helm/templates/clusterrolebinding.yaml` | Binds `ClusterRole` to agent's `ServiceAccount` |
-| `helm/templates/secret.yaml` | Kubernetes `Secret` holding the registration token |
-| `helm/templates/service.yaml` | (Optional) `Service` for the agent pod |
+| `helm/values.yaml` | Defaults (image, persistence, etc.) |
+| `helm/templates/deployment.yaml` | Agent Deployment |
+| `helm/templates/role.yaml` / `rolebinding.yaml` | Namespaced Secret access for credential persistence |
+| `helm/templates/clusterrole.yaml` | Read-only cluster API access |
+| `helm/templates/pvc.yaml` | Optional PVC for file persistence mode |
 
 ---
 
@@ -88,22 +89,29 @@ Admin browser  →  POST /api/generate-token  →  Dashboard
 
 Dashboard      →  Returns one-time token (10-min TTL)
 
-helm install   →  Embeds token in Kubernetes Secret
+helm install   →  Embeds token in Kubernetes Secret (first install)
 
-Agent starts   →  POST /api/register (token)   →  Dashboard
-Dashboard      →  Validates token, marks as used, returns SECRET_KEY
-Agent          →  Stores SECRET_KEY in memory (never on disk)
+Agent starts   →  Load stored credential if present
+               →  Else POST /api/register (token) → Dashboard
+Dashboard      →  Returns per-cluster credential
+Agent          →  Persists credential (default: Secret kubepulse-agent-state)
 ```
 
 ### Heartbeat (every 30 seconds)
 
 ```
-Agent  →  Queries Kubernetes API (in-cluster, ServiceAccount credentials)
-       →  Collects: nodes, pods, deployments, services, resource usage
-       →  POST /api/heartbeat (SECRET_KEY in header)  →  Dashboard
-Dashboard  →  Stores latest data per cluster name in memory
-Browser    →  GET /api/data (every 10–15s)  →  Dashboard
-           →  Renders updated UI
+Agent  →  Queries Kubernetes API
+       →  Collects: nodes (incl. provider/usage), pods, deployments, …
+       →  POST /api/heartbeat (per-cluster credential) → Dashboard
+Dashboard  →  Prices nodes, stores live data + history
+Browser    →  Polls /api/cluster/... and /api/cost every 10–15s
+```
+
+### Upgrade without re-registration
+
+```
+helm upgrade … --reuse-values
+Agent  →  Loads credential from Secret → skips register → heartbeats resume
 ```
 
 ---
@@ -112,14 +120,26 @@ Browser    →  GET /api/data (every 10–15s)  →  Dashboard
 
 | Layer | Credential | Used by | Purpose |
 |---|---|---|---|
-| Admin | `ADMIN_KEY` | Admin browser only | Generate registration tokens |
-| Bootstrap | `REGISTRATION_TOKEN` | Agent (one-time) | Authenticate initial registration |
-| Operational | `SECRET_KEY` | Agent (permanent) | Authenticate every heartbeat |
+| Admin | `ADMIN_KEY` | Admin browser | Generate registration tokens |
+| Bootstrap | `REGISTRATION_TOKEN` | Agent (one-time) | Initial registration |
+| Bootstrap | `SECRET_KEY` | Dashboard | Admin/bootstrap (not sent to agents after register) |
+| Operational | `cluster_credential` | Agent (persisted) | Authenticate every heartbeat |
 
 - Tokens are single-use and expire in 10 minutes.
-- `SECRET_KEY` is never written to disk by the agent.
-- The agent only requires **outbound** HTTPS (port 443). No inbound ports are opened.
-- The Helm chart creates a minimal `ClusterRole` with read-only verbs (`get`, `list`, `watch`).
+- Credentials are stored **hashed (SHA-256)** in the dashboard registry.
+- The agent only requires **outbound** HTTPS (port 443).
+- ClusterRole is read-only; a namespaced Role allows reading/writing the credential Secret only.
+
+---
+
+## Cost estimation
+
+Cost runs on the **dashboard** using:
+1. Static `prices.json` (instance types + usage fallback rates)
+2. Optional public Azure/AWS list-price APIs (no cloud account keys)
+3. Usage model (default): live CPU/RAM × `$/vcpu-hr` / `$/GB-hr`
+
+Agents only send capacity, usage, provider, and instance type.
 
 ---
 
@@ -127,23 +147,22 @@ Browser    →  GET /api/data (every 10–15s)  →  Dashboard
 
 ```
 kubepulse/
-├── .github/
-│   └── workflows/          # CI/CD: auto-build & push images on main push
+├── .github/workflows/      # CI: lint, unit tests, image build checks
 ├── agent/
-│   ├── app.py              # Agent application
+│   ├── app.py
+│   ├── persistence.py
+│   ├── provider.py
 │   └── Dockerfile
 ├── dashboard/
-│   ├── app.py              # Dashboard application
-│   ├── Dockerfile
-│   └── templates/
-│       └── index.html      # Single-page UI
+│   ├── app.py
+│   ├── storage.py
+│   ├── history.py
+│   ├── pricing.py
+│   ├── prices.json
+│   ├── templates/index.html
+│   └── Dockerfile
 ├── helm/
-│   ├── Chart.yaml
-│   ├── values.yaml
-│   └── templates/          # Kubernetes manifests
-├── deploy.sh               # Quick deploy helper (Docker)
-├── deploy-cloudrun.sh      # Cloud Run deploy helper
-├── deploy-helm.sh          # Helm install helper
+├── tests/
+├── docs/
 └── README.md
 ```
-

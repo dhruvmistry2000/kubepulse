@@ -92,7 +92,8 @@ kubectl logs -f deployment/kubepulse-agent
 |---|---|
 | Agent pod is crash-looping | Check logs for errors; verify `dashboardUrl` and `SECRET_KEY` are correct |
 | Cluster has no outbound internet | Ensure nodes can reach port 443 on the dashboard URL (NAT Gateway, firewall rules) |
-| Dashboard restarted and lost state | Agents will re-register automatically on the next heartbeat cycle |
+| Dashboard restarted and lost live metrics | Expected — live data refills on next heartbeat (~30s). Registry persists with file/GCS. |
+| Dashboard restarted and lost clusters | Enable `STORAGE_BACKEND=file` (with volume) or `gcs`; agents keep credentials and resume heartbeats |
 
 ---
 
@@ -140,9 +141,12 @@ helm upgrade kubepulse-agent ./helm \
 
 ## Cluster disappeared from the dashboard after a restart
 
-**Cause:** The dashboard stores cluster state in memory. A restart clears all registered clusters.
+**Cause (no persistence):** Without a mounted volume or GCS, the registry file is lost on restart.
 
-**Fix:** The agents will automatically re-register on their next heartbeat cycle (within 30 seconds). No manual action is needed. The cluster will reappear in the sidebar once the agent sends its first heartbeat after the dashboard comes back online.
+**Fix:**
+1. Set `STORAGE_BACKEND=file` with a persistent volume, or `STORAGE_BACKEND=gcs` on Cloud Run.
+2. Agents with a stored credential resume heartbeats automatically; live metrics refill within ~30 seconds.
+3. After the first successful registration, `helm upgrade --reuse-values` does **not** require a new token.
 
 ---
 

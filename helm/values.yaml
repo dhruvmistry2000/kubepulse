@@ -22,4 +22,17 @@ registrationToken: ""
 dashboardUrl: ""
 clusterName: ""
 
+# Durable registration: persist per-cluster credential across pod restarts / helm upgrades
+persistence:
+  mode: secret
+  filePath: /var/lib/kubepulse/credential.json
+  mountPath: /var/lib/kubepulse
+  fileVolume:
+    enabled: false
+    storageClass: ""
+    size: 1Gi
+    accessMode: ReadWriteOnce
+
+stateSecretName: kubepulse-agent-state
+
 nameOverride: ""

@@ -2,12 +2,11 @@
 K8s Dashboard Agent - Runs inside a Kubernetes cluster.
 
 Architecture: Agent PUSHES data TO the dashboard (no inbound LoadBalancer needed).
-- On startup: register with dashboard using REGISTRATION_TOKEN (one-time), receive SECRET_KEY.
+- On startup: load persisted per-cluster credential, or register with REGISTRATION_TOKEN.
 - Background thread: every 30s collect cluster data and POST to dashboard /api/heartbeat.
 - Minimal Flask app only for GET /healthz (liveness/readiness probes).
 """
 
-import json
 import logging
 import os
 import re
@@ -19,6 +18,9 @@ import requests
 from flask import Flask, jsonify
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+
+from persistence import PERSISTENCE_MODE, load_credential, save_credential
+from provider import parse_node_cloud_info
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -33,8 +35,8 @@ CLUSTER_NAME = re.sub(r"[^a-z0-9\-_]", "-", CLUSTER_NAME_RAW.lower().strip()).st
 REGISTRATION_TOKEN = (os.environ.get("REGISTRATION_TOKEN") or "").strip()
 SECRET_KEY = (os.environ.get("SECRET_KEY") or "").strip()
 
-# After successful registration, we store the dashboard's SECRET_KEY here (in memory only)
-_agent_secret_key = SECRET_KEY if SECRET_KEY else None
+# Per-cluster credential used for heartbeat auth (persisted across restarts when configured).
+_agent_credential = None
 
 REQUEST_TIMEOUT = 10
 HEARTBEAT_INTERVAL = 30
@@ -279,10 +281,31 @@ def volume_to_dict(v):
     return info
 
 
-def collect_nodes():
-    """Collect nodes list with optional metrics and extended details."""
+def get_pod_count_by_node():
+    """Return dict node_name -> running pod count."""
+    counts = {}
+    if core_v1 is None:
+        return counts
+    try:
+        pod_list = core_v1.list_pod_for_all_namespaces()
+        for p in pod_list.items:
+            node = p.spec.node_name if p.spec else None
+            if not node:
+                continue
+            phase = (p.status.phase or "").lower() if p.status else ""
+            if phase in ("running", "pending"):
+                counts[node] = counts.get(node, 0) + 1
+    except Exception as exc:
+        logger.warning("Could not count pods per node: %s", exc)
+    return counts
+
+
+def collect_nodes(pod_counts=None):
+    """Collect nodes list with metrics and cloud provider info (cost computed on dashboard)."""
     if core_v1 is None:
         return {"items": [], "error": K8S_CONFIG_ERROR or "Kubernetes client not configured"}
+    if pod_counts is None:
+        pod_counts = get_pod_count_by_node()
     try:
         node_list = core_v1.list_node()
         node_metrics = get_node_metrics()
@@ -333,11 +356,19 @@ def collect_nodes():
                         )
                     except Exception:
                         continue
+                labels = dict(n.metadata.labels or {})
+                provider_id = getattr(getattr(n, "spec", None), "provider_id", None)
+                cloud = parse_node_cloud_info(provider_id, labels)
                 items.append(
                     {
                         "name": n.metadata.name,
                         "status": status,
                         "roles": roles,
+                        "podCount": pod_counts.get(n.metadata.name, 0),
+                        "provider": cloud["provider"],
+                        "instanceType": cloud["instanceType"],
+                        "region": cloud["region"],
+                        "zone": cloud["zone"],
                         "cpuCapacity": parse_quantity(cap.get("cpu")),
                         "memoryCapacity": parse_quantity(cap.get("memory")),
                         "podsCapacity": parse_quantity(cap.get("pods")),
@@ -354,7 +385,7 @@ def collect_nodes():
                         "memoryUsage": usage.get("memory"),
                         "podCIDR": getattr(getattr(n, "spec", None), "pod_cidr", None),
                         "age": safe_iso(n.metadata.creation_timestamp),
-                        "labels": dict(n.metadata.labels or {}),
+                        "labels": labels,
                         "taints": taints,
                         "addresses": {
                             "internalIP": addresses.get("InternalIP"),
@@ -1097,8 +1128,10 @@ def collect_summary():
 
 
 def collect_all_data():
-    """Collect all cluster data for heartbeat payload."""
-    nodes = collect_nodes()
+    """Collect all cluster data for heartbeat payload (resource metrics only; cost on dashboard)."""
+    pod_counts = get_pod_count_by_node()
+    nodes = collect_nodes(pod_counts=pod_counts)
+    node_items = nodes.get("items", [])
     pods = collect_pods()
     deployments = collect_deployments()
     services = collect_services()
@@ -1107,7 +1140,7 @@ def collect_all_data():
     configmaps = collect_configmaps()
     summary = collect_summary()
     return {
-        "nodes": nodes.get("items", []),
+        "nodes": node_items,
         "pods": pods.get("items", []),
         "deployments": deployments.get("items", []),
         "services": services.get("items", []),
@@ -1120,11 +1153,15 @@ def collect_all_data():
 
 def do_register():
     """Register with dashboard using REGISTRATION_TOKEN. Returns True on success, False on fatal error."""
-    global _agent_secret_key
-    if not DASHBOARD_URL or not REGISTRATION_TOKEN:
+    global _agent_credential
+    if not DASHBOARD_URL:
+        logger.error("DASHBOARD_URL is not set.")
+        return False
+    if not REGISTRATION_TOKEN:
         logger.error(
-            "Neither SECRET_KEY nor REGISTRATION_TOKEN is set. "
-            "Generate a token from the dashboard Add Cluster tab and reinstall."
+            "No stored credential and REGISTRATION_TOKEN is not set. "
+            "Generate a token from the dashboard Add Cluster tab and reinstall, "
+            "or ensure persistence is configured so the credential survives redeploys."
         )
         return False
     url = f"{DASHBOARD_URL}/api/register"
@@ -1135,11 +1172,20 @@ def do_register():
             r = requests.post(url, json=body, headers=headers, timeout=REQUEST_TIMEOUT)
             if r.status_code == 200:
                 data = r.json()
-                _agent_secret_key = (data.get("secret_key") or "").strip()
-                if _agent_secret_key:
-                    logger.info("Registration successful. Cluster '%s' is now connected.", CLUSTER_NAME)
+                _agent_credential = (
+                    (data.get("cluster_credential") or data.get("secret_key") or "").strip()
+                )
+                if _agent_credential:
+                    logger.info("registered with token — cluster '%s' is now connected", CLUSTER_NAME)
+                    try:
+                        save_credential(_agent_credential, CLUSTER_NAME, core_v1=core_v1)
+                    except Exception as exc:
+                        logger.error(
+                            "Registration succeeded but failed to persist credential: %s", exc
+                        )
+                        return False
                     return True
-                logger.error("Registration response missing secret_key.")
+                logger.error("Registration response missing cluster_credential.")
                 return False
             if r.status_code == 410:
                 logger.error(
@@ -1165,8 +1211,7 @@ def do_register():
 
 def send_one_heartbeat():
     """Send a single heartbeat (used once right after registration, then in loop)."""
-    global _agent_secret_key
-    key = _agent_secret_key
+    key = _agent_credential
     if not key or not DASHBOARD_URL:
         return
     try:
@@ -1199,7 +1244,6 @@ def send_one_heartbeat():
 
 def heartbeat_loop():
     """Background thread: send heartbeat to dashboard every HEARTBEAT_INTERVAL seconds."""
-    global _agent_secret_key
     while True:
         time.sleep(HEARTBEAT_INTERVAL)
         send_one_heartbeat()
@@ -1212,10 +1256,24 @@ def healthz():
 
 
 def start_agent():
-    """Ensure we have a secret key (from env or registration), then start heartbeat thread."""
-    global _agent_secret_key
-    if _agent_secret_key:
-        logger.info("SECRET_KEY already set, skipping registration.")
+    """Load or obtain a per-cluster credential, then start heartbeat thread."""
+    global _agent_credential
+
+    stored_credential, _ = load_credential(
+        core_v1=core_v1,
+        expected_cluster_name=CLUSTER_NAME,
+    )
+    if stored_credential:
+        _agent_credential = stored_credential
+        logger.info(
+            "resumed from stored credential (mode=%s) — cluster '%s'",
+            PERSISTENCE_MODE,
+            CLUSTER_NAME,
+        )
+    elif SECRET_KEY:
+        # Legacy bootstrap: shared SECRET_KEY env (deprecated; prefer persisted credential).
+        _agent_credential = SECRET_KEY
+        logger.info("using SECRET_KEY from environment — skipping registration")
     else:
         if not do_register():
             raise SystemExit(1)

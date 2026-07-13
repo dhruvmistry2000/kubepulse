@@ -1,0 +1,32 @@
+{
+  "prices": {
+    "gcp/us-central1/e2-medium": 0.0335,
+    "gcp/us-central1/e2-standard-2": 0.067,
+    "gcp/us-central1/e2-standard-4": 0.134,
+    "gcp/us-central1/n2-standard-2": 0.0971,
+    "gcp/us-central1/n2-standard-4": 0.1942,
+    "gcp/*/e2-medium": 0.0335,
+    "gcp/*/e2-standard-2": 0.067,
+    "gcp/*/e2-standard-4": 0.134,
+    "gcp/*/n2-standard-2": 0.0971,
+    "gcp/*/n2-standard-4": 0.1942,
+    "aws/us-east-1/m5.large": 0.096,
+    "aws/us-east-1/m5.xlarge": 0.192,
+    "aws/us-east-1/t3.medium": 0.0416,
+    "aws/us-east-1/t3.large": 0.0832,
+    "aws/*/m5.large": 0.096,
+    "aws/*/m5.xlarge": 0.192,
+    "aws/*/t3.medium": 0.0416,
+    "aws/*/t3.large": 0.0832,
+    "azure/eastus/Standard_D2s_v3": 0.096,
+    "azure/eastus/Standard_D4s_v3": 0.192,
+    "azure/*/Standard_D2s_v3": 0.096,
+    "azure/*/Standard_D4s_v3": 0.192
+  },
+  "fallback": {
+    "gcp": { "vcpuPerHour": 0.031611, "gbPerHour": 0.004237 },
+    "aws": { "vcpuPerHour": 0.0464, "gbPerHour": 0.005 },
+    "azure": { "vcpuPerHour": 0.0416, "gbPerHour": 0.005 },
+    "onprem": { "vcpuPerHour": 0.02, "gbPerHour": 0.003 }
+  }
+}
