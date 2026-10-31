@@ -17,10 +17,14 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# Dashboard connection settings (required — set these during helm install)
+# Passed with helm install --set. The chart stores them in a Secret; the agent
+# reads that Secret and does not get these as plain env values.
 registrationToken: ""
 dashboardUrl: ""
 clusterName: ""
+# Optional. When set, use this Secret (keys REGISTRATION_TOKEN, DASHBOARD_URL,
+# CLUSTER_NAME) instead of creating one from the values above.
+existingSecret: ""
 
 # Durable registration: persist per-cluster credential across pod restarts / helm upgrades
 persistence:

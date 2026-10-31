@@ -122,7 +122,9 @@ class TestPendingRegistration(unittest.TestCase):
         client = dashboard.app.test_client()
         issued = self._token(client, "Production")
         self.assertEqual(issued["cluster_name"], "production")
+        self.assertIn("--set registrationToken=", issued["helm_command"])
         self.assertIn("clusterName=production", issued["helm_command"])
+        self.assertNotIn("kubectl create secret", issued["helm_command"])
 
         reg = client.post(
             "/api/register",

@@ -214,7 +214,7 @@ kubectl expose deployment kubepulse-dashboard \
 3. Enter the `ADMIN_KEY` you set in Step 2.
 4. Enter a name for your cluster (for example, `production`, `staging`, `dev`).
 5. Click **Generate Install Token**.
-6. Copy the generated Helm command and run it against your cluster:
+6. Copy the generated Helm command and run it against your cluster. The chart stores the token, dashboard URL, and cluster name in a Secret:
 
 ```bash
 helm install kubepulse-agent ./helm \
@@ -306,9 +306,10 @@ You can also delete a cluster using the 🗑 button in the dashboard sidebar.
 |-------------------|----------|-----------------------------------------|
 | image.repository  | No       | Agent image repository (has sane default) |
 | image.tag         | No       | Agent image tag (defaults to `latest`)  |
-| registrationToken | First install only | One-time token from dashboard Add Cluster tab |
-| dashboardUrl      | Yes      | Full HTTPS URL of your dashboard        |
+| registrationToken | First install only | One-time token. Helm install takes it; the chart stores it in a Secret |
+| dashboardUrl      | Yes      | Full HTTPS URL of your dashboard. Stored in that same Secret |
 | clusterName       | Yes      | DNS-1123 subdomain. `Production` is stored as `production` |
+| existingSecret    | No       | Use an existing Secret instead of creating one from the values above |
 | persistence.mode  | No       | `secret` (default), `file`, or `memory` |
 | stateSecretName   | No       | Secret name for stored credential (`kubepulse-agent-state`) |
 | podDisruptionBudget.enabled | No | Off by default. A single replica with `minAvailable: 1` cannot be drained |
@@ -442,19 +443,20 @@ gcloud auth configure-docker us-central1-docker.pkg.dev   # GCR
 # OR
 aws ecr get-login-password --region us-east-1 | docker login ...  # ECR
 
-# Build dashboard (context is the repo root so the image can include common/)
-docker build -f dashboard/Dockerfile -t YOUR_REGISTRY/kubepulse-dashboard:latest .
+# Build dashboard
+docker build -t YOUR_REGISTRY/kubepulse-dashboard:latest ./dashboard
 docker push YOUR_REGISTRY/kubepulse-dashboard:latest
 
 # Build agent
-docker build -f agent/Dockerfile -t YOUR_REGISTRY/kubepulse-agent:latest .
+docker build -t YOUR_REGISTRY/kubepulse-agent:latest ./agent
 docker push YOUR_REGISTRY/kubepulse-agent:latest
 ```
 
 ### GitHub Actions (automated builds)
 
-This repo includes GitHub Actions workflows that automatically
-build and push images on every push to main and daily at midnight UTC.
+This repo includes GitHub Actions workflows that lint every branch.
+A merge to `main` publishes the dashboard image when `dashboard/` changes,
+and the agent image when `agent/` changes.
 See `.github/workflows/` for details.
 
 To use them with your own registry:

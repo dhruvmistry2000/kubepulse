@@ -1,8 +1,10 @@
 name: CI Check
 
 on:
+  push:
+    branches:
+      - "**"
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -25,7 +27,7 @@ jobs:
 
       - name: Check dashboard syntax
         run: |
-          find dashboard -name "*.py" -exec python -m py_compile {} \;
+          find dashboard common -name "*.py" -exec python -m py_compile {} \;
           echo "Dashboard syntax OK"
 
   lint-agent:
@@ -50,6 +52,26 @@ jobs:
           find agent -name "*.py" -exec python -m py_compile {} \;
           echo "Agent syntax OK"
 
+  lint-helm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint and render the chart
+        run: |
+          helm lint helm
+          helm template test helm > /dev/null
+          helm template test helm --set podDisruptionBudget.enabled=true > /dev/null
+          helm template test helm --set persistence.mode=file > /dev/null
+          helm template test helm --set persistence.mode=memory > /dev/null
+
   unit-tests:
     runs-on: ubuntu-latest
     permissions:
@@ -69,12 +91,6 @@ jobs:
           python -m pip install -r agent/requirements.txt
           python -m pip install -r dashboard/requirements.txt
 
-      - name: Install Helm
-        run: |
-          curl -fsSL https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz | tar -xz
-          sudo mv linux-amd64/helm /usr/local/bin/helm
-          helm version
-
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
@@ -93,7 +109,7 @@ jobs:
       - name: Build dashboard image (no push)
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./dashboard
           file: ./dashboard/Dockerfile
           push: false
           tags: kubepulse-dashboard:test
@@ -101,7 +117,7 @@ jobs:
       - name: Build agent image (no push)
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./agent
           file: ./agent/Dockerfile
           push: false
           tags: kubepulse-agent:test

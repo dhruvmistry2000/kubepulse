@@ -252,6 +252,7 @@ def api_generate_token():
         img_repo = agent_image
         img_tag = "latest"
 
+    # Chart templates copy these values into a Secret. The pod reads that Secret.
     helm_command = (
         "helm install kubepulse-agent ./helm \\\n"
         f"  --set image.repository={img_repo} \\\n"

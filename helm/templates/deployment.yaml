@@ -16,6 +16,7 @@ spec:
     spec:
       serviceAccountName: {{ include "k8s-dashboard-agent.fullname" . }}
       containers:
+        {{- $connSecret := .Values.existingSecret | default (include "k8s-dashboard-agent.fullname" .) }}
         - name: agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -26,12 +27,12 @@ spec:
             - name: DASHBOARD_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "k8s-dashboard-agent.fullname" . }}
+                  name: {{ $connSecret }}
                   key: DASHBOARD_URL
             - name: CLUSTER_NAME
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "k8s-dashboard-agent.fullname" . }}
+                  name: {{ $connSecret }}
                   key: CLUSTER_NAME
             - name: PERSISTENCE_MODE
               value: {{ .Values.persistence.mode | quote }}
@@ -43,11 +44,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- if .Values.registrationToken }}
+            {{- if or .Values.existingSecret .Values.registrationToken }}
             - name: REGISTRATION_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "k8s-dashboard-agent.fullname" . }}
+                  name: {{ $connSecret }}
                   key: REGISTRATION_TOKEN
             {{- end }}
           volumeMounts:

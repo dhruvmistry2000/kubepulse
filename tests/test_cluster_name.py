@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from pathlib import Path
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
@@ -27,6 +28,15 @@ class TestNormalizeClusterName(unittest.TestCase):
         self.assertEqual(normalize_cluster_name("a" * 63), "a" * 63)
         self.assertIsNone(normalize_cluster_name("a" * 64))
         self.assertIsNone(normalize_cluster_name("a" * 254))
+
+    def test_image_contexts_carry_the_same_normalizer(self):
+        root = Path(ROOT)
+        canonical = (root / "common" / "cluster_name.py").read_text()
+        for copy in (
+            root / "dashboard" / "common" / "cluster_name.py",
+            root / "agent" / "common" / "cluster_name.py",
+        ):
+            self.assertEqual(copy.read_text(), canonical)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,12 @@ def _helm_available():
     return shutil.which("helm") is not None
 
 
+def _container_env(docs):
+    deploy = next(doc for doc in docs if doc["kind"] == "Deployment")
+    env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
+    return {item["name"]: item for item in env}
+
+
 def helm_template(*sets):
     cmd = ["helm", "template", "test", CHART]
     for value in sets:
@@ -73,6 +79,37 @@ class TestHelmChartDefaults(unittest.TestCase):
         self.assertEqual(rule["resources"], ["secrets"])
         self.assertEqual(rule["resourceNames"], ["kubepulse-agent-state"])
         self.assertEqual(sorted(rule["verbs"]), ["get", "patch", "update"])
+
+    def test_connection_token_is_read_from_a_secret(self):
+        docs = helm_template(
+            "registrationToken=tok",
+            "dashboardUrl=https://dash.example",
+            "clusterName=prod",
+        )
+        bootstrap = [
+            doc for doc in docs
+            if doc["kind"] == "Secret" and doc["metadata"]["name"] == "k8s-dashboard-agent"
+        ]
+        self.assertEqual(len(bootstrap), 1)
+        self.assertEqual(bootstrap[0]["stringData"]["REGISTRATION_TOKEN"], "tok")
+        self.assertEqual(bootstrap[0]["stringData"]["CLUSTER_NAME"], "prod")
+        env = _container_env(docs)
+        token_env = env["REGISTRATION_TOKEN"]
+        self.assertNotIn("value", token_env)
+        ref = token_env["valueFrom"]["secretKeyRef"]
+        self.assertEqual(ref["name"], "k8s-dashboard-agent")
+        self.assertEqual(ref["key"], "REGISTRATION_TOKEN")
+
+    def test_existing_secret_is_not_duplicated_by_the_chart(self):
+        docs = helm_template("existingSecret=kubepulse-agent")
+        names = [doc["metadata"]["name"] for doc in docs if doc["kind"] == "Secret"]
+        self.assertNotIn("k8s-dashboard-agent", names)
+        env = _container_env(docs)
+        for key in ("REGISTRATION_TOKEN", "DASHBOARD_URL", "CLUSTER_NAME"):
+            ref = env[key]["valueFrom"]["secretKeyRef"]
+            self.assertEqual(ref["name"], "kubepulse-agent")
+            self.assertEqual(ref["key"], key)
+            self.assertNotIn("value", env[key])
 
     def test_file_persistence_skips_state_secret_role(self):
         docs = helm_template("persistence.mode=file")
