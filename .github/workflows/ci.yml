@@ -71,6 +71,7 @@ jobs:
           helm template test helm --set podDisruptionBudget.enabled=true > /dev/null
           helm template test helm --set persistence.mode=file > /dev/null
           helm template test helm --set persistence.mode=memory > /dev/null
+          helm template test helm --set networkPolicy.enabled=true > /dev/null
 
   unit-tests:
     runs-on: ubuntu-latest

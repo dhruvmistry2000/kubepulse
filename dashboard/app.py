@@ -8,6 +8,7 @@ K8s Dashboard - Central hub. Agents PUSH data TO this dashboard.
 - POST /api/generate-token: admin generates one-time registration token (ADMIN_KEY).
 """
 
+import gzip
 import os
 import secrets
 import threading
@@ -23,6 +24,37 @@ from history import HistoryStore
 from pricing import PriceLookup, enrich_nodes_with_cost, compute_cost_summary
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH") or (2 * 1024 * 1024))
+
+_register_hits = {}
+_register_lock = threading.Lock()
+REGISTER_LIMIT = 10
+REGISTER_WINDOW_SECONDS = 60
+
+
+@app.before_request
+def _gunzip_request():
+    if (request.headers.get("Content-Encoding") or "").lower() != "gzip":
+        return None
+    try:
+        request._cached_data = gzip.decompress(request.get_data(cache=False))
+    except OSError:
+        return jsonify({"error": "invalid gzip body"}), 400
+    request.environ["CONTENT_LENGTH"] = len(request._cached_data)
+    return None
+
+
+def _register_allowed():
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    with _register_lock:
+        hits = [stamp for stamp in _register_hits.get(ip, []) if now - stamp < REGISTER_WINDOW_SECONDS]
+        if len(hits) >= REGISTER_LIMIT:
+            _register_hits[ip] = hits
+            return False
+        hits.append(now)
+        _register_hits[ip] = hits
+        return True
 
 def _env_flag(name):
     return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
@@ -194,6 +226,8 @@ def index():
 
 @app.route("/api/register", methods=["POST"])
 def api_register():
+    if not _register_allowed():
+        return jsonify({"error": "Too many registration attempts"}), 429
     token = request.headers.get("X-Registration-Token", "").strip()
     if not token:
         return jsonify({"error": "Missing X-Registration-Token header"}), 401
@@ -254,7 +288,11 @@ def api_heartbeat():
     if not key:
         return jsonify({"error": "Unauthorized"}), 401
     body = request.get_json(silent=True) or {}
-    raw_name = (body.get("cluster_name") or "").strip()
+    if not isinstance(body.get("cluster_name"), str):
+        return jsonify({"error": "Missing cluster_name"}), 400
+    if body.get("data") is not None and not isinstance(body.get("data"), dict):
+        return jsonify({"error": "Invalid payload"}), 400
+    raw_name = body.get("cluster_name").strip()
     if not raw_name:
         return jsonify({"error": "Missing cluster_name"}), 400
     cluster_name = registry.resolve_name(raw_name)
@@ -273,13 +311,24 @@ def api_heartbeat():
     agent_version = body.get("agent_version")
     registry.touch_cluster(cluster_name, agent_version=agent_version)
     data = _sanitize_live_payload(body.get("data") or {})
-    nodes = data.get("nodes") or []
-    enrich_nodes_with_cost(nodes, _price_lookup)
-    data["nodes"] = nodes
-    data["cost"] = compute_cost_summary(nodes)
-    with _clusters_lock:
-        live_data[cluster_name] = data
-    history.record_heartbeat(cluster_name, nodes, data.get("cost"))
+    authoritative = data.get("nodesAuthoritative", True) is not False
+    if authoritative:
+        nodes = data.get("nodes") or []
+        enrich_nodes_with_cost(nodes, _price_lookup)
+        data["nodes"] = nodes
+        data["cost"] = compute_cost_summary(nodes)
+        with _clusters_lock:
+            live_data[cluster_name] = data
+        history.record_heartbeat(
+            cluster_name, nodes, data.get("cost"), nodes_authoritative=True
+        )
+    else:
+        with _clusters_lock:
+            previous = live_data.get(cluster_name) or {}
+            data["nodes"] = previous.get("nodes") or []
+            if previous.get("cost") is not None:
+                data["cost"] = previous.get("cost")
+            live_data[cluster_name] = data
     return jsonify({"status": "ok"}), 200
 
 

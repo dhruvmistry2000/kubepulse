@@ -1,7 +1,9 @@
+# The Deployment template always sets replicas to 1. Two agents would double-post.
 replicaCount: 1
 
 image:
   repository: dhruvmistry200/kubepulse-agent
+  # Pin a release tag in production. The template does not fall back to Chart.appVersion.
   tag: latest
   pullPolicy: Always
 
@@ -49,3 +51,7 @@ podDisruptionBudget:
   minAvailable: 1
 
 nameOverride: ""
+
+# Off by default. Allows DNS and outbound HTTPS to the dashboard, and probes on 8080.
+networkPolicy:
+  enabled: false

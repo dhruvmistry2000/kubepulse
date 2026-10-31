@@ -155,6 +155,7 @@ gcloud run deploy kubepulse-dashboard \
   --image dhruvmistry200/kubepulse-dashboard:latest \
   --platform managed \
   --region us-central1 \
+  --max-instances=1 \
   --set-env-vars ADMIN_KEY=change-me-to-admin-key \
   --set-env-vars VIEWER_KEY=change-me-to-viewer-key \
   --set-env-vars SECRET_KEY=change-me-to-a-legacy-heartbeat-key \
@@ -162,7 +163,7 @@ gcloud run deploy kubepulse-dashboard \
 ```
 
 Cloud Run provides an HTTPS URL immediately.  
-Note this URL; you will use it in Step 3. The service must stay reachable by the browser and the agent. API reads require `VIEWER_KEY` or `ADMIN_KEY`; do not rely on an open read API.
+Note this URL; you will use it in Step 3. The service must stay reachable by the browser and the agent. API reads require `VIEWER_KEY` or `ADMIN_KEY`; do not rely on an open read API. Keep `--max-instances=1`: registration tokens and live metrics live in memory, and a second instance would miss tokens and overwrite the registry.
 
 #### Option B – Docker on any VM
 
@@ -301,6 +302,9 @@ You can also delete a cluster using the 🗑 button in the dashboard sidebar.
 | PRICING_AWS_LIVE_ENABLED | No | `true` | AWS public offer index |
 | PRICING_PREFER_LIVE | No | `false` | Prefer live API over static map |
 | PRICING_REFRESH_INTERVAL | No | `43200` | Seconds between live price cache refreshes |
+| PRICE_CACHE_DIR | No | system temp dir | Disk cache for public price lists. Heartbeats never download prices |
+| MAX_CONTENT_LENGTH | No | `2097152` | Maximum request body size, in bytes |
+| STORE_WRITE_DEBOUNCE_SECONDS | No | `2` | Delay between later registry and history writes. The first write is immediate |
 
 **Cloud Run:** use `STORAGE_BACKEND=gcs` with a GCS bucket — local disk is ephemeral.
 
@@ -421,6 +425,7 @@ Example with Cloud Run:
 ```bash
 gcloud run deploy kubepulse-dashboard \
   --image YOUR_REGISTRY/kubepulse-dashboard:latest \
+  --max-instances=1 \
   --set-env-vars AGENT_IMAGE=YOUR_REGISTRY/kubepulse-agent:latest \
   --set-env-vars SECRET_KEY=your-secret \
   --set-env-vars ADMIN_KEY=your-admin-key
@@ -592,6 +597,7 @@ Cloud Run has no persistent local disk. Use GCS for the cluster registry and his
 ```bash
 gcloud run deploy kubepulse-dashboard \
   --image dhruvmistry200/kubepulse-dashboard:latest \
+  --max-instances=1 \
   --set-env-vars SECRET_KEY=your-secret \
   --set-env-vars ADMIN_KEY=your-admin-key \
   --set-env-vars DASHBOARD_URL=https://your-service.run.app \

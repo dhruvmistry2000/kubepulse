@@ -10,11 +10,27 @@ Sources (no cloud account credentials):
 import json
 import logging
 import os
-import re
+import queue
+import sys
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 import requests
+
+def _ensure_common_on_path():
+    here = Path(__file__).resolve().parent
+    for candidate in (here, here.parent):
+        if (candidate / "common" / "quantity.py").is_file():
+            path = str(candidate)
+            if path not in sys.path:
+                sys.path.insert(0, path)
+            return
+
+
+_ensure_common_on_path()
+from common.quantity import parse_memory_bytes  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -117,26 +133,10 @@ def _parse_cpu_usage_cores(value):
 
 
 def _parse_memory_gib(value):
-    if value is None:
+    nbytes = parse_memory_bytes(value)
+    if nbytes is None:
         return None
-    s = str(value).strip()
-    if not s:
-        return None
-    m = re.match(r"^([\d.]+)\s*([KMGTPkmgtp]i?)?$", s)
-    if not m:
-        return None
-    n = float(m.group(1))
-    u = (m.group(2) or "").lower()
-    gib = {
-        "ki": n / (1024 ** 2),
-        "mi": n / 1024,
-        "gi": n,
-        "ti": n * 1024,
-        "k": n / (1000 ** 3) * (1024 ** 3) / (1024 ** 3),
-        "m": n / (1000 ** 2) * (1024 ** 3) / (1024 ** 3),
-        "g": n * (1000 ** 3) / (1024 ** 3),
-    }
-    return gib.get(u, n / (1024 ** 3))
+    return nbytes / (1024 ** 3)
 
 
 class PriceLookup:
@@ -150,7 +150,12 @@ class PriceLookup:
         self._aws_index = None
         self._aws_index_fetched_at = 0
         self._aws_offers = {}
+        self._refresh_queue = queue.Queue()
+        self._scheduled = set()
         self._load_static_map()
+        self._load_disk_cache()
+        worker = threading.Thread(target=self._refresh_loop, daemon=True)
+        worker.start()
 
     def _load_static_map(self):
         price_map_path = (os.environ.get("PRICE_MAP_PATH") or PRICE_MAP_PATH).strip()
@@ -218,6 +223,11 @@ class PriceLookup:
         if hit:
             return hit
 
+        self._schedule_refresh("azure", region, instance_type)
+        return None
+
+    def _fetch_azure_now(self, region, instance_type):
+        cache_key = ("azure", region, instance_type)
         try:
             filt = (
                 f"armRegionName eq '{region}' and armSkuName eq '{instance_type}' "
@@ -235,10 +245,10 @@ class PriceLookup:
                     hourly = float(item.get("retailPrice") or item.get("unitPrice") or 0)
                     if hourly > 0:
                         self._cache_set(cache_key, hourly, "live")
-                        return hourly, "live"
+                        self._write_disk_cache("azure-%s-%s.json" % (region, instance_type), {"hourly": hourly})
+                        return
         except Exception as exc:
             logger.debug("Azure public pricing failed for %s/%s: %s", region, instance_type, exc)
-        return None
 
     def _load_aws_public_offer(self, region):
         now = time.time()
@@ -247,16 +257,22 @@ class PriceLookup:
             if cached and (now - cached["fetched_at"]) < PRICING_REFRESH_INTERVAL:
                 return cached["data"]
 
+        self._schedule_refresh("aws", region, None)
+        return None
+
+    def _fetch_aws_offer_now(self, region):
+        now = time.time()
         try:
             if self._aws_index is None or (now - self._aws_index_fetched_at) >= PRICING_REFRESH_INTERVAL:
                 r = requests.get(AWS_PUBLIC_INDEX_URL, timeout=30)
                 r.raise_for_status()
                 self._aws_index = r.json()
                 self._aws_index_fetched_at = now
+                self._write_disk_cache("aws-index.json", self._aws_index)
 
             region_info = (self._aws_index.get("regions") or {}).get(region)
             if not region_info:
-                return None
+                return
 
             offer_url = AWS_PUBLIC_BASE + region_info["currentVersionUrl"]
             r = requests.get(offer_url, timeout=60)
@@ -264,10 +280,62 @@ class PriceLookup:
             offer = r.json()
             with self._lock:
                 self._aws_offers[region] = {"data": offer, "fetched_at": now}
-            return offer
+            self._write_disk_cache("aws-%s.json" % region, offer)
         except Exception as exc:
             logger.debug("AWS public offer load failed for %s: %s", region, exc)
-            return None
+
+    def _price_cache_dir(self):
+        directory = os.environ.get("PRICE_CACHE_DIR") or os.path.join(
+            tempfile.gettempdir(), "kubepulse-prices"
+        )
+        os.makedirs(directory, exist_ok=True)
+        return directory
+
+    def _write_disk_cache(self, name, payload):
+        path = os.path.join(self._price_cache_dir(), name)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, path)
+
+    def _load_disk_cache(self):
+        directory = os.environ.get("PRICE_CACHE_DIR") or os.path.join(
+            tempfile.gettempdir(), "kubepulse-prices"
+        )
+        index_path = os.path.join(directory, "aws-index.json")
+        if not os.path.isfile(index_path):
+            return
+        age = time.time() - os.path.getmtime(index_path)
+        if age >= PRICING_REFRESH_INTERVAL:
+            return
+        try:
+            with open(index_path, "r", encoding="utf-8") as fh:
+                self._aws_index = json.load(fh)
+            self._aws_index_fetched_at = time.time() - age
+        except (OSError, json.JSONDecodeError):
+            return
+
+    def _schedule_refresh(self, kind, region, instance_type):
+        key = (kind, region, instance_type)
+        with self._lock:
+            if key in self._scheduled:
+                return
+            self._scheduled.add(key)
+        self._refresh_queue.put(key)
+
+    def _refresh_loop(self):
+        while True:
+            kind, region, instance_type = self._refresh_queue.get()
+            try:
+                if kind == "aws":
+                    self._fetch_aws_offer_now(region)
+                elif kind == "azure":
+                    self._fetch_azure_now(region, instance_type)
+            except Exception:
+                logger.debug("price refresh failed for %s %s", kind, region, exc_info=True)
+            finally:
+                with self._lock:
+                    self._scheduled.discard((kind, region, instance_type))
 
     def lookup_aws_live(self, region, instance_type):
         """AWS public price list JSON — no credentials."""

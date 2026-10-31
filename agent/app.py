@@ -7,11 +7,13 @@ Architecture: Agent PUSHES data TO the dashboard (no inbound LoadBalancer needed
 - Minimal Flask app only for GET /healthz (liveness/readiness probes).
 """
 
+import gzip
+import json
 import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from flask import Flask, jsonify
@@ -20,6 +22,7 @@ from kubernetes.client.rest import ApiException
 
 from persistence import PERSISTENCE_MODE, load_credential, save_credential
 from common.cluster_name import normalize_cluster_name
+from common.quantity import parse_memory_bytes
 from provider import parse_node_cloud_info
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -41,6 +44,7 @@ _agent_credential = None
 
 REQUEST_TIMEOUT = 10
 HEARTBEAT_INTERVAL = 30
+_last_heartbeat_ok = 0.0
 REGISTER_RETRY_INTERVAL = 15
 REGISTER_MAX_ATTEMPTS = 5
 
@@ -118,18 +122,9 @@ def get_pod_metrics(custom_objects):
                     except Exception:
                         pass
                 # Parse memory Ki
-                mem_s = str(mem).strip()
-                if mem_s.endswith("Ki"):
-                    total_mem_ki += float(mem_s[:-2])
-                elif mem_s.endswith("Mi"):
-                    total_mem_ki += float(mem_s[:-2]) * 1024
-                elif mem_s.endswith("Gi"):
-                    total_mem_ki += float(mem_s[:-2]) * 1024 * 1024
-                else:
-                    try:
-                        total_mem_ki += float(mem_s) / 1024
-                    except Exception:
-                        pass
+                nbytes = parse_memory_bytes(mem)
+                if nbytes is not None:
+                    total_mem_ki += nbytes / 1024.0
             out[(ns, name)] = {
                 "cpu": f"{total_cpu_nano:.0f}n",  # nanocores string
                 "memory": f"{total_mem_ki:.0f}Ki",  # Ki string
@@ -363,6 +358,7 @@ def collect_nodes(pod_counts=None):
                 items.append(
                     {
                         "name": n.metadata.name,
+                        "uid": getattr(n.metadata, "uid", None),
                         "status": status,
                         "roles": roles,
                         "podCount": pod_counts.get(n.metadata.name, 0),
@@ -446,7 +442,8 @@ def get_replicaset_owner_map(apps_v1):
                 if kind == "Deployment" and name:
                     rs_name = getattr(rs.metadata, "name", None)
                     if rs_name:
-                        rs_to_deployment[rs_name] = name
+                        rs_namespace = getattr(rs.metadata, "namespace", None) or ""
+                        rs_to_deployment[(rs_namespace, rs_name)] = name
     except Exception as e:
         logger.warning("Could not collect ReplicaSets for owner map: %s", e)
     return rs_to_deployment
@@ -465,30 +462,34 @@ def collect_pods():
         # Preload live pod metrics once per collection cycle.
         pod_metrics = get_pod_metrics(custom_objects) if METRICS_AVAILABLE and custom_objects else {}
 
-        # Preload pod events by namespace so the dashboard can show recent events per pod.
+        # One cluster-wide event list. Keep recent Warning events for pods.
         pod_events_index = {}
         try:
-            ns_set = set()
-            for p in pod_list.items:
-                if p.metadata and p.metadata.namespace:
-                    ns_set.add(p.metadata.namespace)
-            for ns in ns_set:
+            ev_list = core_v1.list_event_for_all_namespaces()
+            event_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+            for ev in ev_list.items:
                 try:
-                    ev_list = core_v1.list_namespaced_event(ns)
+                    if (getattr(ev, "type", None) or "") != "Warning":
+                        continue
+                    involved = getattr(ev, "involved_object", None)
+                    if not involved or involved.kind != "Pod":
+                        continue
+                    pod_name = involved.name
+                    ns = getattr(involved, "namespace", None)
+                    if not pod_name or not ns:
+                        continue
+                    ts = (
+                        getattr(ev, "last_timestamp", None)
+                        or getattr(ev, "event_time", None)
+                        or getattr(getattr(ev, "metadata", None), "creation_timestamp", None)
+                    )
+                    if ts is not None and getattr(ts, "tzinfo", None) is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    if ts is not None and ts < event_cutoff:
+                        continue
+                    pod_events_index.setdefault((ns, pod_name), []).append(ev)
                 except Exception:
                     continue
-                for ev in ev_list.items:
-                    try:
-                        involved = getattr(ev, "involved_object", None)
-                        if not involved or involved.kind != "Pod":
-                            continue
-                        pod_name = involved.name
-                        if not pod_name:
-                            continue
-                        key = (ns, pod_name)
-                        pod_events_index.setdefault(key, []).append(ev)
-                    except Exception:
-                        continue
             # Trim and sort events per pod: last 5 by lastTimestamp.
             for key, evs in list(pod_events_index.items()):
                 try:
@@ -563,25 +564,11 @@ def collect_pods():
                 memory_request = None
                 memory_limit = None
                 try:
-                    import re as _re
-
                     def _parse_mem_ki(s):
-                        s_str = str(s or "").strip()
-                        m = _re.match(r"^([\d.]+)\s*([KMGTPkmgtp]i?)?$", s_str)
-                        if not m:
+                        nbytes = parse_memory_bytes(s)
+                        if nbytes is None:
                             return 0
-                        n = float(m.group(1))
-                        u = (m.group(2) or "").lower()
-                        table = {
-                            "ki": 1,
-                            "k": 1,
-                            "mi": 1024,
-                            "m": 1024,
-                            "gi": 1024 ** 2,
-                            "g": 1024 ** 2,
-                            "ti": 1024 ** 3,
-                        }
-                        return n * table.get(u, 1 / 1024)
+                        return nbytes / 1024.0
 
                     cpu_request_total = 0.0
                     cpu_limit_total = 0.0
@@ -690,7 +677,7 @@ def collect_pods():
                         }
                     )
                     if kind == "ReplicaSet":
-                        deployment = rs_to_deployment.get(name)
+                        deployment = rs_to_deployment.get((p.metadata.namespace, name))
                         workload = deployment or name
                         workload_kind = "Deployment" if deployment else "ReplicaSet"
                     elif kind in ("DaemonSet", "StatefulSet", "Job", "CronJob"):
@@ -1149,7 +1136,8 @@ def collect_all_data():
     """Collect all cluster data for heartbeat payload (resource metrics only; cost on dashboard)."""
     pod_counts = get_pod_count_by_node()
     nodes = collect_nodes(pod_counts=pod_counts)
-    node_items = nodes.get("items", [])
+    nodes_authoritative = "error" not in nodes
+    node_items = nodes.get("items", []) if nodes_authoritative else []
     pods = collect_pods()
     deployments = collect_deployments()
     services = collect_services()
@@ -1166,6 +1154,7 @@ def collect_all_data():
         "namespaces": namespaces.get("items", []),
         "configmaps": configmaps.get("items", []),
         "summary": summary,
+        "nodesAuthoritative": nodes_authoritative,
     }
 
 
@@ -1238,6 +1227,7 @@ def do_register():
 
 def send_one_heartbeat():
     """Send a single heartbeat (used once right after registration, then in loop)."""
+    global _last_heartbeat_ok
     key = _agent_credential
     if not key or not DASHBOARD_URL:
         return
@@ -1248,13 +1238,19 @@ def send_one_heartbeat():
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "data": data,
         }
+        raw = gzip.compress(json.dumps(payload).encode("utf-8"))
         r = requests.post(
             f"{DASHBOARD_URL}/api/heartbeat",
-            json=payload,
-            headers={"X-Secret-Key": key, "Content-Type": "application/json"},
+            data=raw,
+            headers={
+                "X-Secret-Key": key,
+                "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
+            },
             timeout=REQUEST_TIMEOUT,
         )
         if r.status_code == 200:
+            _last_heartbeat_ok = time.time()
             s = data.get("summary", {})
             logger.info(
                 "Heartbeat sent for cluster '%s' — %s nodes, %s pods, %s deployments",
@@ -1278,7 +1274,14 @@ def heartbeat_loop():
 
 @app.route("/healthz", methods=["GET"])
 def healthz():
-    """Liveness/readiness probe: returns ok if the app is running."""
+    """Ready only after a heartbeat succeeded within two intervals."""
+    if not DASHBOARD_URL:
+        return jsonify({"status": "ok"})
+    if not _last_heartbeat_ok:
+        return jsonify({"status": "starting"}), 503
+    age = time.time() - _last_heartbeat_ok
+    if age > 2 * HEARTBEAT_INTERVAL:
+        return jsonify({"status": "stale"}), 503
     return jsonify({"status": "ok"})
 
 

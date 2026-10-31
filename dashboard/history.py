@@ -9,6 +9,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ GCS_HISTORY_OBJECT = (os.environ.get("GCS_HISTORY_OBJECT") or "kubepulse/history
 HISTORY_RETENTION_DAYS = int(os.environ.get("HISTORY_RETENTION_DAYS") or "30")
 SCALING_INTERVAL_SECONDS = int(os.environ.get("SCALING_INTERVAL_SECONDS") or "300")
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS") or "30")
+WRITE_DEBOUNCE_SECONDS = float(os.environ.get("STORE_WRITE_DEBOUNCE_SECONDS") or "2")
 HOURS_PER_MONTH = 730
 
 
@@ -98,6 +100,10 @@ class HistoryStore:
     def __init__(self):
         self._lock = threading.Lock()
         self._data = self._empty()
+        self._last_payload = None
+        self._last_write_at = 0
+        self._pending_payload = None
+        self._flush_timer = None
         self._load()
 
     def _empty(self):
@@ -170,10 +176,41 @@ class HistoryStore:
                 self._data["nodes"] = {}
 
     def _persist(self):
+        payload = json.dumps(self._data, indent=2, sort_keys=True) + "\n"
+        if payload == self._last_payload:
+            return
+        now = time.time()
+        if self._last_write_at and now - self._last_write_at < WRITE_DEBOUNCE_SECONDS:
+            self._pending_payload = payload
+            self._arm_flush()
+            return
+        self._write_payload(payload)
+
+    def _write_payload(self, payload):
+        data = json.loads(payload)
         if STORAGE_BACKEND == "gcs":
-            self._save_gcs(self._data)
+            self._save_gcs(data)
         else:
-            self._save_file(self._data)
+            self._save_file(data)
+        self._last_payload = payload
+        self._last_write_at = time.time()
+        self._pending_payload = None
+
+    def _arm_flush(self):
+        timer = self._flush_timer
+        if timer is not None and timer.is_alive():
+            return
+        self._flush_timer = threading.Timer(WRITE_DEBOUNCE_SECONDS, self._flush_pending)
+        self._flush_timer.daemon = True
+        self._flush_timer.start()
+
+    def _flush_pending(self):
+        with self._lock:
+            payload = self._pending_payload
+            if not payload or payload == self._last_payload:
+                self._pending_payload = None
+                return
+            self._write_payload(payload)
 
     def _prune(self):
         cutoff = datetime.now(timezone.utc) - timedelta(days=HISTORY_RETENTION_DAYS)
@@ -196,11 +233,14 @@ class HistoryStore:
         for key in to_delete:
             del nodes[key]
 
-    def record_heartbeat(self, cluster_name, nodes, cost_summary=None):
+    def record_heartbeat(self, cluster_name, nodes, cost_summary=None, nodes_authoritative=True):
         """Update scaling timeline and per-node lifetime records from a heartbeat."""
-        now = _now_iso()
+        if not nodes_authoritative:
+            return
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
         node_count = len(nodes or [])
-        interval_hours = HEARTBEAT_INTERVAL_SECONDS / 3600.0
+        cap_seconds = 2 * HEARTBEAT_INTERVAL_SECONDS
 
         with self._lock:
             scaling = self._data.setdefault("scaling", {})
@@ -226,11 +266,15 @@ class HistoryStore:
                 name = n.get("name")
                 if not name:
                     continue
-                key = f"{cluster_name}:{name}"
+                uid = (n.get("uid") or "").strip()
+                key = f"{cluster_name}:{uid}:{name}" if uid else f"{cluster_name}:{name}"
                 seen_keys.add(key)
-                rec = node_records.get(key) or {
+                existing = node_records.get(key)
+                previous_seen = _parse_iso(existing.get("lastSeen")) if existing else None
+                rec = existing or {
                     "cluster": cluster_name,
                     "nodeName": name,
+                    "uid": uid or None,
                     "provider": n.get("provider"),
                     "instanceType": n.get("instanceType"),
                     "region": n.get("region"),
@@ -243,6 +287,8 @@ class HistoryStore:
                 }
                 rec["lastSeen"] = now
                 rec["retired"] = False
+                if uid:
+                    rec["uid"] = uid
                 rec["provider"] = n.get("provider") or rec.get("provider")
                 rec["instanceType"] = n.get("instanceType") or rec.get("instanceType")
                 rec["region"] = n.get("region") or rec.get("region")
@@ -255,9 +301,13 @@ class HistoryStore:
                     rec["peakMemPct"] = max(rec.get("peakMemPct") or 0, mem_pct)
 
                 hourly = n.get("hourlyUsd")
-                if n.get("priced") and hourly:
+                if previous_seen and n.get("priced") and hourly:
+                    elapsed = min(
+                        max((now_dt - previous_seen).total_seconds(), 0),
+                        cap_seconds,
+                    )
                     rec["accruedCostUsd"] = round(
-                        (rec.get("accruedCostUsd") or 0) + hourly * interval_hours, 4
+                        (rec.get("accruedCostUsd") or 0) + hourly * (elapsed / 3600.0), 4
                     )
                 node_records[key] = rec
 

@@ -41,6 +41,20 @@ class TestHelmChartDefaults(unittest.TestCase):
         kinds = [doc["kind"] for doc in docs]
         self.assertIn("Deployment", kinds)
         self.assertNotIn("PodDisruptionBudget", kinds)
+        self.assertNotIn("NetworkPolicy", kinds)
+        deploy = next(doc for doc in docs if doc["kind"] == "Deployment")
+        self.assertEqual(deploy["spec"]["replicas"], 1)
+        pod = deploy["spec"]["template"]["spec"]
+        self.assertTrue(pod["securityContext"]["runAsNonRoot"])
+        container = pod["containers"][0]
+        self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+        self.assertEqual(container["securityContext"]["capabilities"]["drop"], ["ALL"])
+        self.assertTrue(container["image"].endswith(":latest"))
+
+    def test_network_policy_renders_only_when_enabled(self):
+        docs = helm_template("networkPolicy.enabled=true")
+        policies = [doc for doc in docs if doc["kind"] == "NetworkPolicy"]
+        self.assertEqual(len(policies), 1)
 
     def test_pdb_renders_only_when_enabled(self):
         docs = helm_template("podDisruptionBudget.enabled=true")

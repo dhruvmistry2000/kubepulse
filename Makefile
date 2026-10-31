@@ -34,6 +34,7 @@ helm:
 	$(HELM) template test $(CHART) --set podDisruptionBudget.enabled=true > /dev/null
 	$(HELM) template test $(CHART) --set persistence.mode=file > /dev/null
 	$(HELM) template test $(CHART) --set persistence.mode=memory > /dev/null
+	$(HELM) template test $(CHART) --set networkPolicy.enabled=true > /dev/null
 
 image-dashboard:
 	docker build -t $(DASHBOARD_IMAGE) dashboard

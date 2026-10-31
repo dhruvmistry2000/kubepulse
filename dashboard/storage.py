@@ -15,6 +15,7 @@ import secrets
 import sys
 import tempfile
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,6 +39,7 @@ STORAGE_BACKEND = (os.environ.get("STORAGE_BACKEND") or "file").strip().lower()
 STORAGE_PATH = (os.environ.get("STORAGE_PATH") or "/data/kubepulse/registry.json").strip()
 GCS_BUCKET = (os.environ.get("GCS_BUCKET") or "").strip()
 GCS_OBJECT = (os.environ.get("GCS_OBJECT") or "kubepulse/registry.json").strip()
+WRITE_DEBOUNCE_SECONDS = float(os.environ.get("STORE_WRITE_DEBOUNCE_SECONDS") or "2")
 
 
 def _now_iso():
@@ -95,6 +97,10 @@ class RegistryStore:
     def __init__(self):
         self._lock = threading.Lock()
         self._clusters = {}
+        self._last_payload = None
+        self._last_write_at = 0
+        self._pending_payload = None
+        self._flush_timer = None
         self._load()
 
     def _empty_registry(self):
@@ -173,11 +179,43 @@ class RegistryStore:
             self._clusters = dict(clusters)
 
     def _persist(self):
-        data = {"version": 1, "clusters": self._clusters}
+        payload = json.dumps(
+            {"version": 1, "clusters": self._clusters}, indent=2, sort_keys=True
+        ) + "\n"
+        if payload == self._last_payload:
+            return
+        now = time.time()
+        if self._last_write_at and now - self._last_write_at < WRITE_DEBOUNCE_SECONDS:
+            self._pending_payload = payload
+            self._arm_flush()
+            return
+        self._write_payload(payload)
+
+    def _write_payload(self, payload):
+        data = json.loads(payload)
         if STORAGE_BACKEND == "gcs":
             self._save_gcs(data)
         else:
             self._save_file(data)
+        self._last_payload = payload
+        self._last_write_at = time.time()
+        self._pending_payload = None
+
+    def _arm_flush(self):
+        timer = self._flush_timer
+        if timer is not None and timer.is_alive():
+            return
+        self._flush_timer = threading.Timer(WRITE_DEBOUNCE_SECONDS, self._flush_pending)
+        self._flush_timer.daemon = True
+        self._flush_timer.start()
+
+    def _flush_pending(self):
+        with self._lock:
+            payload = self._pending_payload
+            if not payload or payload == self._last_payload:
+                self._pending_payload = None
+                return
+            self._write_payload(payload)
 
     def list_cluster_names(self):
         with self._lock:

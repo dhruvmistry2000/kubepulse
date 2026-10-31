@@ -38,6 +38,15 @@ class TestNormalizeClusterName(unittest.TestCase):
         ):
             self.assertEqual(copy.read_text(), canonical)
 
+    def test_image_contexts_carry_the_same_quantity_parser(self):
+        root = Path(ROOT)
+        canonical = (root / "common" / "quantity.py").read_text()
+        for copy in (
+            root / "dashboard" / "common" / "quantity.py",
+            root / "agent" / "common" / "quantity.py",
+        ):
+            self.assertEqual(copy.read_text(), canonical)
+
 
 if __name__ == "__main__":
     unittest.main()

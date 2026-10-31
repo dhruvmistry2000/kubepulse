@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "k8s-dashboard-agent.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: 1
   selector:
     matchLabels:
       {{- include "k8s-dashboard-agent.selectorLabels" . | nindent 6 }}
@@ -15,11 +15,21 @@ spec:
         {{- include "k8s-dashboard-agent.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "k8s-dashboard-agent.fullname" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         {{- $connSecret := .Values.existingSecret | default (include "k8s-dashboard-agent.fullname" .) }}
         - name: agent
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
@@ -52,6 +62,8 @@ spec:
                   key: REGISTRATION_TOKEN
             {{- end }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             {{- if eq .Values.persistence.mode "file" }}
             - name: agent-state
               mountPath: {{ .Values.persistence.mountPath | quote }}
@@ -71,6 +83,8 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         {{- if eq .Values.persistence.mode "file" }}
         - name: agent-state
           {{- if .Values.persistence.fileVolume.enabled }}
