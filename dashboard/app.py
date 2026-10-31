@@ -51,6 +51,7 @@ _pending_tokens_lock = threading.Lock()
 TOKEN_EXPIRY_SECONDS = 600  # 10 minutes
 CLEANUP_INTERVAL = 60
 HEALTHY_SECONDS = 90
+_legacy_key_warned = False
 
 
 def _now():
@@ -99,6 +100,31 @@ def _cluster_sanitized(name):
     return bool(re.match(r"^[a-zA-Z0-9\-_]+$", name))
 
 
+def _set_token_used(token, used):
+    with _pending_tokens_lock:
+        entry = pending_tokens.get(token)
+        if entry is not None:
+            entry["used"] = used
+
+
+def _legacy_key_authorizes(cluster_name, key):
+    """Deprecated path for clusters registered before per-cluster credentials.
+
+    Pending clusters are excluded so the global key cannot finish registration.
+    """
+    global _legacy_key_warned
+    if not key or key != SECRET_KEY or not registry.is_active(cluster_name):
+        return False
+    if not _legacy_key_warned:
+        _legacy_key_warned = True
+        print(
+            "WARNING: accepted a heartbeat with the legacy SECRET_KEY. "
+            "This path is deprecated; use the per-cluster credential.",
+            flush=True,
+        )
+    return True
+
+
 # --- Routes ---
 
 @app.route("/")
@@ -124,10 +150,16 @@ def api_register():
         cluster_name = entry.get("cluster_name", "").strip()
         if not _cluster_sanitized(cluster_name):
             return jsonify({"error": "Invalid cluster name"}), 400
-        entry["used"] = True
-    if registry.cluster_exists(cluster_name):
+    if registry.is_active(cluster_name):
         return jsonify({"error": "Cluster name already registered"}), 409
     body = request.get_json(silent=True) or {}
+    with _pending_tokens_lock:
+        entry = pending_tokens.get(token)
+        if not entry or entry.get("used"):
+            return jsonify({"error": "Token already used. Generate a new token from the dashboard."}), 401
+        if entry.get("expires_at") and entry["expires_at"] <= _now():
+            return jsonify({"error": "Token expired. Generate a new token from the dashboard."}), 410
+        entry["used"] = True
     try:
         _, credential = registry.register_cluster(
             cluster_name,
@@ -135,8 +167,15 @@ def api_register():
         )
     except ValueError:
         return jsonify({"error": "Cluster name already registered"}), 409
+    except Exception:
+        _set_token_used(token, False)
+        print(
+            "ERROR: failed to persist registration for cluster '%s'" % cluster_name,
+            flush=True,
+        )
+        return jsonify({"error": "Failed to store registration"}), 500
     print(
-        "INFO: Cluster '%s' successfully registered using registration token" % cluster_name,
+        "INFO: Cluster '%s' registered pending first heartbeat" % cluster_name,
         flush=True,
     )
     return jsonify({
@@ -160,7 +199,7 @@ def api_heartbeat():
 
     authorized = registry.verify_credential(cluster_name, key)
     # Legacy fallback: accept global SECRET_KEY for clusters registered before per-cluster creds.
-    if not authorized and key == SECRET_KEY and registry.cluster_exists(cluster_name):
+    if not authorized and _legacy_key_authorizes(cluster_name, key):
         authorized = True
     if not authorized:
         return jsonify({"error": "Unauthorized"}), 401
@@ -187,9 +226,8 @@ def api_generate_token():
     cluster_name = (body.get("cluster_name") or "").strip()
     if not _cluster_sanitized(cluster_name):
         return jsonify({"error": "Invalid cluster name. Use only letters, numbers, hyphens and underscores, max 40 characters."}), 400
-    with _clusters_lock:
-        if registry.cluster_exists(cluster_name):
-            return jsonify({"error": "Cluster name already registered. Choose a different name."}), 409
+    if registry.is_active(cluster_name):
+        return jsonify({"error": "Cluster name already registered. Choose a different name."}), 409
     _cleanup_pending_tokens()
     token = secrets.token_hex(32)
     now = _now()
@@ -301,7 +339,10 @@ def api_clusters():
             "last_seen": last_seen.isoformat() if last_seen else None,
             "agent_version": entry.get("agent_version") if entry else None,
             "registered_at": entry.get("createdAt") if entry else None,
-            "is_healthy": age_seconds <= HEALTHY_SECONDS,
+            "status": (entry.get("status") if entry else None) or "active",
+            "is_healthy": age_seconds <= HEALTHY_SECONDS and (
+                (entry.get("status") if entry else None) or "active"
+            ) != "pending",
             "summary": (data or {}).get("summary"),
         })
     return jsonify(result), 200

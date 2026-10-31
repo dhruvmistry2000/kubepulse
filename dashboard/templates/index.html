@@ -1301,6 +1301,7 @@
       const warningCount = (pending || 0) + (failed || 0);
 
       const statsParts = [];
+      if (c.status === 'pending') statsParts.push('pending registration');
       if (totalNodes != null) statsParts.push(`${totalNodes} nodes`);
       if (totalPods != null) statsParts.push(`${totalPods} pods`);
       if (warningCount > 0) {
@@ -3740,7 +3741,7 @@
       if (!el('tokenBlock') || el('tokenBlock').style.display !== 'block') return;
       const clusterName = el('addClusterName').value.trim();
       if (!clusterName) return;
-      const found = clustersList.find(c => c.name === clusterName);
+      const found = clustersList.find(c => c.name === clusterName && c.status !== 'pending');
       const statusEl = el('addClusterStatus');
       if (found && !addClusterConnected) {
         addClusterConnected = true;

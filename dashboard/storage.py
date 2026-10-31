@@ -37,6 +37,19 @@ def generate_cluster_credential():
     return secrets.token_urlsafe(32)
 
 
+# Clusters registered before two-phase registration have no status field.
+# Treat that as active so existing registries keep accepting heartbeats.
+STATUS_PENDING = "pending"
+STATUS_ACTIVE = "active"
+
+
+def cluster_status(entry):
+    """Return pending or active. Missing status means an already-active cluster."""
+    if not entry:
+        return None
+    return entry.get("status") or STATUS_ACTIVE
+
+
 def _parse_iso(value):
     if not value:
         return None
@@ -152,23 +165,41 @@ class RegistryStore:
         with self._lock:
             return cluster_name in self._clusters
 
+    def is_active(self, cluster_name):
+        """True only after the first successful heartbeat (or a legacy entry)."""
+        with self._lock:
+            entry = self._clusters.get(cluster_name)
+            return cluster_status(entry) == STATUS_ACTIVE
+
     def register_cluster(self, cluster_name, agent_version="?"):
         """
-        Register a new cluster and return (entry_dict, plaintext_credential).
-        The plaintext credential is returned once and only the hash is stored.
+        Register a cluster and return (entry_dict, plaintext_credential).
+
+        The cluster stays pending until the first authenticated heartbeat.
+        Re-registering a pending cluster rotates the credential hash so a
+        failed agent save can be retried with a new token. The plaintext
+        credential is returned once; only the hash is stored.
         """
         credential = generate_cluster_credential()
         now = _now_iso()
-        entry = {
-            "clusterName": cluster_name,
-            "credentialHash": hash_credential(credential),
-            "createdAt": now,
-            "lastSeen": now,
-            "agent_version": agent_version,
-        }
         with self._lock:
-            if cluster_name in self._clusters:
+            existing = self._clusters.get(cluster_name)
+            if existing and cluster_status(existing) == STATUS_ACTIVE:
                 raise ValueError("cluster already registered")
+            if existing:
+                existing["credentialHash"] = hash_credential(credential)
+                existing["agent_version"] = agent_version
+                existing["status"] = STATUS_PENDING
+                self._persist()
+                return dict(existing), credential
+            entry = {
+                "clusterName": cluster_name,
+                "credentialHash": hash_credential(credential),
+                "createdAt": now,
+                "lastSeen": None,
+                "agent_version": agent_version,
+                "status": STATUS_PENDING,
+            }
             self._clusters[cluster_name] = entry
             self._persist()
         return dict(entry), credential
@@ -190,6 +221,7 @@ class RegistryStore:
             if not entry:
                 return False
             entry["lastSeen"] = _now_iso()
+            entry["status"] = STATUS_ACTIVE
             if agent_version:
                 entry["agent_version"] = agent_version
             self._persist()

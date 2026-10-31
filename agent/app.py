@@ -1176,14 +1176,20 @@ def do_register():
                     (data.get("cluster_credential") or data.get("secret_key") or "").strip()
                 )
                 if _agent_credential:
-                    logger.info("registered with token — cluster '%s' is now connected", CLUSTER_NAME)
                     try:
                         save_credential(_agent_credential, CLUSTER_NAME, core_v1=core_v1)
                     except Exception as exc:
                         logger.error(
-                            "Registration succeeded but failed to persist credential: %s", exc
+                            "FATAL: credential for cluster '%s' could not be saved (%s). "
+                            "Exiting. The cluster stays pending; generate a new token and retry.",
+                            CLUSTER_NAME,
+                            exc,
                         )
                         return False
+                    logger.info(
+                        "saved credential for cluster '%s'; it connects on the first heartbeat",
+                        CLUSTER_NAME,
+                    )
                     return True
                 logger.error("Registration response missing cluster_credential.")
                 return False
@@ -1276,7 +1282,9 @@ def start_agent():
         logger.info("using SECRET_KEY from environment — skipping registration")
     else:
         if not do_register():
-            raise SystemExit(1)
+            raise SystemExit(
+                "registration failed; credential was not persisted and the cluster stays pending"
+            )
     # Send first heartbeat immediately so dashboard has data right away
     send_one_heartbeat()
     # Daemon thread for subsequent heartbeats every 30s
