@@ -308,7 +308,7 @@ You can also delete a cluster using the 🗑 button in the dashboard sidebar.
 | image.tag         | No       | Agent image tag (defaults to `latest`)  |
 | registrationToken | First install only | One-time token from dashboard Add Cluster tab |
 | dashboardUrl      | Yes      | Full HTTPS URL of your dashboard        |
-| clusterName       | Yes      | Display name for this cluster           |
+| clusterName       | Yes      | DNS-1123 subdomain. `Production` is stored as `production` |
 | persistence.mode  | No       | `secret` (default), `file`, or `memory` |
 | stateSecretName   | No       | Secret name for stored credential (`kubepulse-agent-state`) |
 | podDisruptionBudget.enabled | No | Off by default. A single replica with `minAvailable: 1` cannot be drained |
@@ -325,6 +325,7 @@ After the first successful registration, `registrationToken` is optional — the
 - Heartbeats authenticate with the per-cluster credential; credentials are stored hashed (SHA-256) at rest.
 - Redeploying either side does not require a new registration token once the credential has been saved.
 - Clusters registered before per-cluster credentials can still heartbeat with `SECRET_KEY`. That path is deprecated and cannot revive a deleted cluster or finish a pending registration.
+- Cluster names are DNS-1123 subdomains (lowercase letters, digits, hyphens, and dots). The dashboard returns the canonical name from `/api/register`, and the agent heartbeats that exact string. A cluster stored before this rule is still found if the heartbeat name matches ignoring case.
 
 ---
 
@@ -441,12 +442,12 @@ gcloud auth configure-docker us-central1-docker.pkg.dev   # GCR
 # OR
 aws ecr get-login-password --region us-east-1 | docker login ...  # ECR
 
-# Build dashboard
-docker build -t YOUR_REGISTRY/kubepulse-dashboard:latest ./dashboard
+# Build dashboard (context is the repo root so the image can include common/)
+docker build -f dashboard/Dockerfile -t YOUR_REGISTRY/kubepulse-dashboard:latest .
 docker push YOUR_REGISTRY/kubepulse-dashboard:latest
 
 # Build agent
-docker build -t YOUR_REGISTRY/kubepulse-agent:latest ./agent
+docker build -f agent/Dockerfile -t YOUR_REGISTRY/kubepulse-agent:latest .
 docker push YOUR_REGISTRY/kubepulse-agent:latest
 ```
 

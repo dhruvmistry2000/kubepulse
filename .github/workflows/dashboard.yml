@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "dashboard/**"
+      - "common/**"
   schedule:
     - cron: "0 0 * * *" # every 24 hours at midnight UTC
   workflow_dispatch:
@@ -68,7 +69,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ./dashboard
+          context: .
           file: ./dashboard/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true

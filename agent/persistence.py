@@ -11,8 +11,24 @@ import base64
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_common_on_path():
+    here = Path(__file__).resolve().parent
+    for candidate in (here, here.parent):
+        if (candidate / "common" / "cluster_name.py").is_file():
+            path = str(candidate)
+            if path not in sys.path:
+                sys.path.insert(0, path)
+            return
+
+
+_ensure_common_on_path()
+from common.cluster_name import normalize_cluster_name  # noqa: E402
 
 PERSISTENCE_MODE = (os.environ.get("PERSISTENCE_MODE") or "secret").strip().lower()
 STATE_SECRET_NAME = (os.environ.get("STATE_SECRET_NAME") or "kubepulse-agent-state").strip()
@@ -22,6 +38,17 @@ PERSISTENCE_FILE_PATH = (
 
 CREDENTIAL_KEY = "clusterCredential"
 CLUSTER_NAME_KEY = "clusterName"
+
+
+def _same_cluster(stored, expected):
+    """True when both names are the same cluster, including case differences."""
+    if not expected or not stored:
+        return True
+    if stored == expected:
+        return True
+    left = normalize_cluster_name(stored)
+    right = normalize_cluster_name(expected)
+    return bool(left and right and left == right)
 
 
 def _read_file_state():
@@ -137,7 +164,7 @@ def load_credential(core_v1=None, namespace=None, expected_cluster_name=None):
     if not credential:
         return None, None
 
-    if expected_cluster_name and stored_cluster_name and stored_cluster_name != expected_cluster_name:
+    if not _same_cluster(stored_cluster_name, expected_cluster_name):
         logger.warning(
             "Stored cluster name '%s' does not match CLUSTER_NAME '%s'; ignoring stored credential",
             stored_cluster_name,

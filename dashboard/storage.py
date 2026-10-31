@@ -11,11 +11,27 @@ import json
 import logging
 import os
 import secrets
+import sys
 import tempfile
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_common_on_path():
+    here = Path(__file__).resolve().parent
+    for candidate in (here, here.parent):
+        if (candidate / "common" / "cluster_name.py").is_file():
+            path = str(candidate)
+            if path not in sys.path:
+                sys.path.insert(0, path)
+            return
+
+
+_ensure_common_on_path()
+from common.cluster_name import normalize_cluster_name  # noqa: E402
 
 STORAGE_BACKEND = (os.environ.get("STORAGE_BACKEND") or "file").strip().lower()
 STORAGE_PATH = (os.environ.get("STORAGE_PATH") or "/data/kubepulse/registry.json").strip()
@@ -170,6 +186,37 @@ class RegistryStore:
         with self._lock:
             entry = self._clusters.get(cluster_name)
             return cluster_status(entry) == STATUS_ACTIVE
+
+    def stored_name(self, name):
+        """Return the existing registry key for this name, or None.
+
+        Matches the canonical form, the exact stored key, then a
+        case-insensitive key from before names were canonicalized.
+        """
+        raw = (name or "").strip()
+        if not raw:
+            return None
+        canonical = normalize_cluster_name(raw)
+        with self._lock:
+            if canonical and canonical in self._clusters:
+                return canonical
+            if raw in self._clusters:
+                return raw
+            lowered = raw.lower()
+            for existing in self._clusters:
+                if existing.lower() == lowered:
+                    return existing
+        return None
+
+    def resolve_name(self, name):
+        """Stored key if this cluster exists, otherwise the canonical name.
+
+        None when the value is empty or not a DNS-1123 name and nothing is stored.
+        """
+        stored = self.stored_name(name)
+        if stored:
+            return stored
+        return normalize_cluster_name(name)
 
     def register_cluster(self, cluster_name, agent_version="?"):
         """

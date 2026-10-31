@@ -61,6 +61,17 @@ class TestAgentCredentialPersistence(unittest.TestCase):
             cred, _ = persistence.load_credential(expected_cluster_name="prod-cluster")
             self.assertIsNone(cred)
 
+    def test_canonical_names_match(self):
+        os.environ["PERSISTENCE_MODE"] = "file"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "credential.json")
+            os.environ["PERSISTENCE_FILE_PATH"] = path
+            persistence = self._import_persistence()
+            persistence.save_credential("cred-abc", "production")
+            cred, name = persistence.load_credential(expected_cluster_name="Production")
+            self.assertEqual(cred, "cred-abc")
+            self.assertEqual(name, "production")
+
     def test_secret_mode_read_write(self):
         os.environ["PERSISTENCE_MODE"] = "secret"
         os.environ["STATE_SECRET_NAME"] = "kubepulse-agent-state"

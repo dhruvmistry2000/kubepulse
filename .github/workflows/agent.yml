@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "agent/**"
+      - "common/**"
       - "helm/**" # also trigger if helm chart changes
   schedule:
     - cron: "0 2 * * *" # every 24 hours at 2am UTC (offset from dashboard)
@@ -70,7 +71,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ./agent
+          context: .
           file: ./agent/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true

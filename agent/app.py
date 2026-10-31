@@ -9,7 +9,6 @@ Architecture: Agent PUSHES data TO the dashboard (no inbound LoadBalancer needed
 
 import logging
 import os
-import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -20,6 +19,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from persistence import PERSISTENCE_MODE, load_credential, save_credential
+from common.cluster_name import normalize_cluster_name
 from provider import parse_node_cloud_info
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -29,9 +29,10 @@ app = Flask(__name__)
 
 # --- Config from environment ---
 DASHBOARD_URL = (os.environ.get("DASHBOARD_URL") or "").rstrip("/")
-CLUSTER_NAME_RAW = os.environ.get("CLUSTER_NAME", "default")
-# Sanitize cluster name for URL safety: lowercase, replace spaces/special with hyphen
-CLUSTER_NAME = re.sub(r"[^a-z0-9\-_]", "-", CLUSTER_NAME_RAW.lower().strip()).strip("-") or "default"
+_raw_cluster_name = os.environ.get("CLUSTER_NAME", "default").strip()
+# Canonical when the env value is a DNS-1123 name. Otherwise keep the raw
+# value so clusters registered before this rule still heartbeat the same key.
+CLUSTER_NAME = normalize_cluster_name(_raw_cluster_name) or _raw_cluster_name or "default"
 REGISTRATION_TOKEN = (os.environ.get("REGISTRATION_TOKEN") or "").strip()
 SECRET_KEY = (os.environ.get("SECRET_KEY") or "").strip()
 
@@ -1153,7 +1154,7 @@ def collect_all_data():
 
 def do_register():
     """Register with dashboard using REGISTRATION_TOKEN. Returns True on success, False on fatal error."""
-    global _agent_credential
+    global _agent_credential, CLUSTER_NAME
     if not DASHBOARD_URL:
         logger.error("DASHBOARD_URL is not set.")
         return False
@@ -1176,6 +1177,9 @@ def do_register():
                     (data.get("cluster_credential") or data.get("secret_key") or "").strip()
                 )
                 if _agent_credential:
+                    returned_name = (data.get("cluster_name") or "").strip()
+                    if returned_name:
+                        CLUSTER_NAME = returned_name
                     try:
                         save_credential(_agent_credential, CLUSTER_NAME, core_v1=core_v1)
                     except Exception as exc:

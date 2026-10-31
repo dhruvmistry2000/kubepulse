@@ -117,6 +117,53 @@ class TestPendingRegistration(unittest.TestCase):
         )
         self.assertEqual(taken.status_code, 409)
 
+    def test_production_name_round_trip(self):
+        dashboard = self._load_app()
+        client = dashboard.app.test_client()
+        issued = self._token(client, "Production")
+        self.assertEqual(issued["cluster_name"], "production")
+        self.assertIn("clusterName=production", issued["helm_command"])
+
+        reg = client.post(
+            "/api/register",
+            json={"cluster_name": "Production", "agent_version": "1.0"},
+            headers={"X-Registration-Token": issued["token"]},
+        )
+        self.assertEqual(reg.status_code, 200, reg.get_json())
+        body = reg.get_json()
+        self.assertEqual(body["cluster_name"], "production")
+
+        # The agent heartbeats the name returned by /api/register.
+        exact = self._heartbeat(client, body["cluster_name"], body["cluster_credential"])
+        self.assertEqual(exact.status_code, 200)
+        # A later heartbeat that still uses the typed name resolves to the same cluster.
+        mixed = self._heartbeat(client, "Production", body["cluster_credential"])
+        self.assertEqual(mixed.status_code, 200)
+        self.assertEqual(len(client.get("/api/clusters").get_json()), 1)
+
+        rejected = client.post(
+            "/api/generate-token",
+            json={"cluster_name": "my_cluster"},
+            headers=ADMIN,
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+    def test_legacy_mixed_case_key_still_accepts_heartbeat(self):
+        dashboard = self._load_app()
+        dashboard.registry._clusters["Production"] = {
+            "clusterName": "Production",
+            "credentialHash": __import__("hashlib").sha256(b"legacy-cred").hexdigest(),
+            "createdAt": "2020-01-01T00:00:00+00:00",
+            "lastSeen": "2020-01-01T00:00:00+00:00",
+            "agent_version": "0.9",
+        }
+        dashboard.registry._persist()
+        client = dashboard.app.test_client()
+        ok = self._heartbeat(client, "production", "legacy-cred")
+        self.assertEqual(ok.status_code, 200)
+        deleted = client.delete("/api/cluster/Production", headers=ADMIN)
+        self.assertEqual(deleted.status_code, 200)
+
     def test_registry_write_failure_keeps_token_usable(self):
         dashboard = self._load_app()
         client = dashboard.app.test_client()
@@ -186,6 +233,48 @@ class TestAgentSaveFailure(unittest.TestCase):
                             with self.assertRaises(SystemExit):
                                 agent_app.start_agent()
                             heartbeat.assert_not_called()
+        finally:
+            os.environ.clear()
+            os.environ.update(env_backup)
+            sys.path = saved_path
+            for mod in ("app", "persistence", "provider"):
+                sys.modules.pop(mod, None)
+
+    def test_register_uses_canonical_name_from_dashboard(self):
+        env_backup = dict(os.environ)
+        saved_path = list(sys.path)
+        os.environ.pop("DASHBOARD_URL", None)
+        os.environ["PERSISTENCE_MODE"] = "memory"
+        os.environ["CLUSTER_NAME"] = "Production"
+        agent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "agent"))
+        sys.path = [p for p in sys.path if os.path.abspath(p) != os.path.abspath(DASHBOARD_DIR)]
+        sys.path.insert(0, agent_dir)
+        for mod in ("app", "persistence", "provider", "common", "common.cluster_name"):
+            sys.modules.pop(mod, None)
+        try:
+            with patch("kubernetes.config.load_incluster_config", side_effect=Exception("no k8s")):
+                import app as agent_app
+
+            response = Mock()
+            response.status_code = 200
+            response.json.return_value = {
+                "cluster_credential": "issued-cred",
+                "cluster_name": "production",
+            }
+            agent_app.DASHBOARD_URL = "https://dash.example"
+            agent_app.CLUSTER_NAME = "Production"
+            agent_app.REGISTRATION_TOKEN = "tok"
+            agent_app.SECRET_KEY = ""
+            agent_app._agent_credential = None
+            with patch.object(agent_app, "load_credential", return_value=(None, None)):
+                with patch.object(agent_app.requests, "post", return_value=response):
+                    with patch.object(agent_app, "save_credential") as save:
+                        with patch.object(agent_app, "send_one_heartbeat"):
+                            with patch.object(agent_app.threading, "Thread"):
+                                agent_app.start_agent()
+            self.assertEqual(agent_app.CLUSTER_NAME, "production")
+            save.assert_called_once()
+            self.assertEqual(save.call_args.args[1], "production")
         finally:
             os.environ.clear()
             os.environ.update(env_backup)

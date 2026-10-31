@@ -863,6 +863,7 @@
     // Admin key entered in Add Cluster tab (persisted in-memory for this page).
     // Used for both token generation and cluster deletion.
     let adminKey = '';
+    let addClusterCanonicalName = '';
 
     // Global filters (apply to most resource tabs)
     const SYSTEM_NAMESPACES = new Set([
@@ -1281,8 +1282,10 @@
     }
 
     function validateClusterName(name) {
-      if (!name || name.length > 40) return false;
-      return /^[a-z0-9\-_]+$/.test(name);
+      if (!name || name.length > 253) return false;
+      const labels = name.split('.');
+      if (labels.some(label => !label || label.length > 63)) return false;
+      return /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/.test(name);
     }
 
     function getClusterShortName(name) {
@@ -3616,7 +3619,7 @@
       const name = el('addClusterName').value.trim().toLowerCase();
       const valid = validateClusterName(name);
       const valEl = el('clusterNameValidation');
-      valEl.textContent = valid ? '✓ Valid' : (name ? 'Use only letters, numbers, hyphens and underscores' : '');
+      valEl.textContent = valid ? '✓ Valid' : (name ? 'Use a DNS-1123 name: lowercase letters, digits, hyphens, and dots' : '');
       valEl.className = 'validation ' + (valid ? 'valid' : (name ? 'invalid' : ''));
       el('btnGenerateToken').disabled = !valid;
     });
@@ -3650,6 +3653,7 @@
           }
           return;
         }
+        addClusterCanonicalName = data.cluster_name || clusterName.trim().toLowerCase();
         tokenExpiresAt = new Date(data.expires_at).getTime();
         currentToken = data.token || null;
         currentHelmCommand = data.helm_command || null;
@@ -3739,7 +3743,8 @@
     let addClusterConnected = false;
     setInterval(() => {
       if (!el('tokenBlock') || el('tokenBlock').style.display !== 'block') return;
-      const clusterName = el('addClusterName').value.trim();
+      const typed = el('addClusterName').value.trim().toLowerCase();
+      const clusterName = addClusterCanonicalName || typed;
       if (!clusterName) return;
       const found = clustersList.find(c => c.name === clusterName && c.status !== 'pending');
       const statusEl = el('addClusterStatus');

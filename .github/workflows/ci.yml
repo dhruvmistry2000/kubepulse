@@ -93,7 +93,7 @@ jobs:
       - name: Build dashboard image (no push)
         uses: docker/build-push-action@v5
         with:
-          context: ./dashboard
+          context: .
           file: ./dashboard/Dockerfile
           push: false
           tags: kubepulse-dashboard:test
@@ -101,7 +101,7 @@ jobs:
       - name: Build agent image (no push)
         uses: docker/build-push-action@v5
         with:
-          context: ./agent
+          context: .
           file: ./agent/Dockerfile
           push: false
           tags: kubepulse-agent:test
