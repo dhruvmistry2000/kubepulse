@@ -69,6 +69,12 @@ jobs:
           python -m pip install -r agent/requirements.txt
           python -m pip install -r dashboard/requirements.txt
 
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz | tar -xz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version
+
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 

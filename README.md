@@ -311,6 +311,7 @@ You can also delete a cluster using the 🗑 button in the dashboard sidebar.
 | clusterName       | Yes      | Display name for this cluster           |
 | persistence.mode  | No       | `secret` (default), `file`, or `memory` |
 | stateSecretName   | No       | Secret name for stored credential (`kubepulse-agent-state`) |
+| podDisruptionBudget.enabled | No | Off by default. A single replica with `minAvailable: 1` cannot be drained |
 
 After the first successful registration, `registrationToken` is optional — the agent resumes from its stored credential on `helm upgrade --reuse-values`.
 

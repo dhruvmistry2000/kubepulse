@@ -1,3 +1,4 @@
+{{- if .Values.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -5,7 +6,8 @@ metadata:
   labels:
     {{- include "k8s-dashboard-agent.labels" . | nindent 4 }}
 spec:
-  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable | default 1 }}
   selector:
     matchLabels:
       {{- include "k8s-dashboard-agent.selectorLabels" . | nindent 6 }}
+{{- end }}

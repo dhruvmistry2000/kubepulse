@@ -35,4 +35,10 @@ persistence:
 
 stateSecretName: kubepulse-agent-state
 
+# The agent is a single replica. A PDB with minAvailable 1 blocks node drains,
+# so it stays off unless you explicitly enable it.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
 nameOverride: ""
