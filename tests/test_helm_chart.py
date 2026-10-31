@@ -47,3 +47,39 @@ class TestHelmChartDefaults(unittest.TestCase):
             ["helm", "lint", CHART], capture_output=True, text=True
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_state_secret_role_can_update_precreated_secret(self):
+        docs = helm_template(
+            "registrationToken=tok",
+            "dashboardUrl=https://dash.example",
+            "clusterName=prod",
+        )
+        secrets = [doc for doc in docs if doc["kind"] == "Secret"]
+        state = [
+            doc for doc in secrets
+            if doc["metadata"]["name"] == "kubepulse-agent-state"
+        ]
+        self.assertEqual(len(state), 1)
+        annotations = state[0]["metadata"].get("annotations") or {}
+        self.assertEqual(annotations.get("helm.sh/resource-policy"), "keep")
+        self.assertNotIn("stringData", state[0])
+        self.assertNotIn("data", state[0])
+
+        roles = [doc for doc in docs if doc["kind"] == "Role"]
+        self.assertEqual(len(roles), 1)
+        rules = roles[0]["rules"]
+        self.assertEqual(len(rules), 1)
+        rule = rules[0]
+        self.assertEqual(rule["resources"], ["secrets"])
+        self.assertEqual(rule["resourceNames"], ["kubepulse-agent-state"])
+        self.assertEqual(sorted(rule["verbs"]), ["get", "patch", "update"])
+
+    def test_file_persistence_skips_state_secret_role(self):
+        docs = helm_template("persistence.mode=file")
+        names = [
+            doc["metadata"]["name"]
+            for doc in docs
+            if doc["kind"] in ("Secret", "Role", "RoleBinding")
+        ]
+        self.assertNotIn("kubepulse-agent-state", names)
+        self.assertFalse(any(name.endswith("-state") for name in names))

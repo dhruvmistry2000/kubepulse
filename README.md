@@ -319,7 +319,7 @@ After the first successful registration, `registrationToken` is optional — the
 
 ## Durable Registration (Part A)
 
-- **Agent** persists a per-cluster credential in a Kubernetes Secret (`persistence.mode=secret`, default).
+- **Agent** persists a per-cluster credential in a Kubernetes Secret (`persistence.mode=secret`, default). The chart creates that Secret empty and grants `get`/`update`/`patch` on it only. `helm upgrade` keeps stored data. Uninstall keeps the Secret; delete `kubepulse-agent-state` yourself to drop the credential.
 - **Dashboard** persists the cluster registry to disk (`file`) or GCS (`gcs`).
 - Heartbeats authenticate with the per-cluster credential; credentials are stored hashed (SHA-256) at rest.
 - Redeploying either side does not require a new registration token.

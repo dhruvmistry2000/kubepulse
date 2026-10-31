@@ -6,8 +6,10 @@ metadata:
   labels:
     {{- include "k8s-dashboard-agent.labels" . | nindent 4 }}
 rules:
+  # create cannot be limited by resourceNames (the name is not known yet),
+  # so the chart pre-creates the Secret and this Role only updates that object.
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: [{{ .Values.stateSecretName | quote }}]
-    verbs: ["get", "create", "update", "patch"]
+    verbs: ["get", "update", "patch"]
 {{- end }}

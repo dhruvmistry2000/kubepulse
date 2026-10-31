@@ -33,6 +33,9 @@ persistence:
     size: 1Gi
     accessMode: ReadWriteOnce
 
+# Pre-created by the chart. The agent updates this object; it cannot create
+# Secrets. helm upgrade keeps existing data (lookup) and uninstall keeps the
+# Secret (helm.sh/resource-policy: keep). Delete it by hand to drop the credential.
 stateSecretName: kubepulse-agent-state
 
 # The agent is a single replica. A PDB with minAvailable 1 blocks node drains,
