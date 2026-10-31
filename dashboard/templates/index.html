@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>K8s Dashboard</title>
   <style>
+    /* ============================================================
+       1. Design tokens
+       Color names below are the ones the current rules already use.
+       Spacing, radius, and type tokens are declared for later steps
+       and are not applied yet, so this pass does not change layout.
+       ============================================================ */
     :root {
       --bg-dark: #0d1117;
       --bg-card: #161b22;
@@ -17,15 +23,40 @@
       --yellow: #d29922;
       --orange: #db6d28;
       --accent: #58a6ff;
+
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+      --radius-pill: 12px;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --text-xs: 0.75rem;
+      --text-sm: 0.875rem;
+      --text-md: 1rem;
+      --text-lg: 1.25rem;
+      --duration: 150ms;
     }
+
+    /* ============================================================
+       2. Base
+       ============================================================ */
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      font-family: var(--font-sans);
       background: var(--bg-dark);
       color: var(--text);
       min-height: 100vh;
     }
+    /* ============================================================
+       3. Shell: navbar, layout, sidebar
+       ============================================================ */
     .navbar {
       display: flex;
       align-items: center;
@@ -193,6 +224,9 @@
       color: var(--text-muted);
       font-size: 0.875rem;
     }
+    /* ============================================================
+       4. Pages: main tabs, summary cards, resource tabs
+       ============================================================ */
     .main-tabs {
       display: flex;
       gap: 4px;
@@ -267,6 +301,9 @@
     .cost-card .value { font-size: 1.25rem; font-weight: 600; margin-top: 4px; }
     .scaling-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding: 12px 0; }
     .scaling-bar { flex: 1; min-width: 8px; background: var(--accent); border-radius: 3px 3px 0 0; opacity: 0.85; }
+    /* ============================================================
+       5. Filters, tags, expandable rows
+       ============================================================ */
     .filter-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
     .filter-row select { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; }
     .filter-input {
@@ -429,6 +466,9 @@
       text-transform: uppercase;
       color: var(--text-muted);
     }
+    /* ============================================================
+       6. Tables, badges, charts, loading
+       ============================================================ */
     .progress {
       position: relative;
       width: 100%;
@@ -635,7 +675,9 @@
       transform: translateX(16px);
       background: var(--accent);
     }
-    /* Add Cluster tab */
+    /* ============================================================
+       7. Add Cluster
+       ============================================================ */
     .add-cluster-panel { padding: 24px; max-width: 720px; }
     .add-cluster-panel h2 { margin-top: 0; font-size: 1.25rem; }
     .add-cluster-panel .form-group { margin-bottom: 20px; }
@@ -760,6 +802,7 @@
   </style>
 </head>
 <body>
+  <!-- shell: navbar -->
   <nav class="navbar">
     <div class="navbar-left">
       <h1>K8s Dashboard</h1>
@@ -776,6 +819,7 @@
     <button class="btn-refresh" id="btnRefresh" type="button">Refresh Now</button>
   </nav>
 
+  <!-- shell: sidebar + pages -->
   <div class="layout">
     <aside class="sidebar" id="sidebar">
       <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Toggle sidebar"></button>
@@ -792,6 +836,7 @@
         <button class="main-tab active" data-page="add" id="mainTabAdd" type="button">➕ Add Cluster</button>
       </div>
 
+      <!-- page: add cluster -->
       <div id="pageAdd" class="container add-cluster-panel">
         <h2>Add a new cluster</h2>
         <div class="form-group">
@@ -832,6 +877,7 @@
         <div id="dashboardUrlWarning" style="margin-top:16px; color: var(--yellow); font-size: 0.875rem; display:none;"></div>
       </div>
 
+      <!-- page: selected cluster -->
       <div id="pageCluster" class="container" style="display:none;">
         <div id="staleBanner" class="stale-banner" style="display:none;">⚠ No data received from this cluster in the last 90 seconds</div>
         <div class="summary-row" id="summaryRow"></div>
@@ -843,6 +889,7 @@
         </div>
       </div>
 
+      <!-- page: no cluster selected -->
       <div id="pageClusterPlaceholder" class="view-placeholder" style="display:none;">
         Select a cluster from the sidebar or add a new one.
       </div>
@@ -857,6 +904,11 @@
   </div>
 
   <script nonce="{{ csp_nonce }}">
+    /* ============================================================
+       JS map (all inside DOMContentLoaded except the constants):
+       state, formatters, sidebar, auth, navigation, API,
+       filters, tables and details, polling, event wiring.
+       ============================================================ */
     const TAB_IDS = ['graphs', 'nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps', 'cost', 'scaling', 'retired'];
     const RESOURCE_TAB_IDS = ['nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps'];
     const CLUSTERS_POLL_MS = 10000;
@@ -940,6 +992,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
 
+    /* --- helpers --- */
     function el(id) { return document.getElementById(id); }
     function qs(sel, root = document) { return root.querySelector(sel); }
     function qsa(sel, root = document) { return root.querySelectorAll(sel); }
@@ -978,6 +1031,7 @@
       applySidebarState();
     }
 
+    /* --- formatters --- */
     function formatAge(iso) {
       if (!iso) return '—';
       const d = new Date(iso);
@@ -1303,6 +1357,7 @@
       return s.slice(0, 4);
     }
 
+    /* --- sidebar --- */
     function renderClusterSidebarItem(c) {
       const isActive = selectedCluster === c.name;
       const summary = c.summary || {};
@@ -1364,6 +1419,7 @@
       });
     }
 
+    /* --- auth (key stays in memory) --- */
     function authHeaders(extra) {
       const headers = Object.assign({}, extra || {});
       if (adminKey) {
@@ -1396,6 +1452,7 @@
       return div.innerHTML;
     }
 
+    /* --- page navigation --- */
     function selectCluster(name) {
       selectedCluster = name;
       renderClusterSidebar();
@@ -1502,6 +1559,7 @@
       el('pageAdd').style.display = 'none';
     }
 
+    /* --- API: cluster list --- */
     async function fetchClusters() {
       const emptyEl = el('sidebarEmpty');
       try {
@@ -1577,6 +1635,7 @@
     // -----------------------------
     // Global namespace/label filters
     // -----------------------------
+    /* --- filters --- */
     function renderGlobalFilterBar() {
       const host = el('globalFilterBar');
       if (!host) return;
@@ -1912,6 +1971,7 @@
       });
     }
 
+    /* --- tables, charts, resource renderers --- */
     function buildTable(headers, rows, rowHtml) {
       const thead = headers.map((h, idx) => {
         const cls = idx === 0 ? ' class="chev-col"' : '';
@@ -2744,6 +2804,7 @@
     }
 
     // ---- Detail panels (expanded rows) ----
+    /* --- expandable detail panels --- */
     function renderPodDetails(p) {
       const allLabels = (p.labels && Object.keys(p.labels).length) ? renderTagsFromDict(p.labels, { max: null }) : '—';
       const allAnnotations = (p.annotations && Object.keys(p.annotations).length)
@@ -3563,6 +3624,7 @@
       attachExpandableRows(tabId);
     }
 
+    /* --- API: selected cluster, then polling and event wiring --- */
     let _cache = {};
     async function fetchClusterData() {
       if (!selectedCluster) return;
