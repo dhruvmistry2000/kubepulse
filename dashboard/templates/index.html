@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>K8s Dashboard</title>
+  <title>KubePulse</title>
   <style>
     /* ============================================================
        1. Design tokens
@@ -41,6 +41,52 @@
       --text-md: 1rem;
       --text-lg: 1.25rem;
       --duration: 150ms;
+      color-scheme: dark;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme]) {
+        color-scheme: light;
+        --bg-dark: #f4f6f8;
+        --bg-card: #ffffff;
+        --bg-hover: #eef1f4;
+        --border: #d0d7de;
+        --text: #1c2128;
+        --text-muted: #57606a;
+        --green: #1a7f37;
+        --red: #cf222e;
+        --yellow: #9a6700;
+        --orange: #bc4c00;
+        --accent: #0969da;
+      }
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg-dark: #f4f6f8;
+      --bg-card: #ffffff;
+      --bg-hover: #eef1f4;
+      --border: #d0d7de;
+      --text: #1c2128;
+      --text-muted: #57606a;
+      --green: #1a7f37;
+      --red: #cf222e;
+      --yellow: #9a6700;
+      --orange: #bc4c00;
+      --accent: #0969da;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg-dark: #0d1117;
+      --bg-card: #161b22;
+      --bg-hover: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+      --orange: #db6d28;
+      --accent: #58a6ff;
     }
 
     /* ============================================================
@@ -53,6 +99,29 @@
       background: var(--bg-dark);
       color: var(--text);
       min-height: 100vh;
+      font-size: 14px;
+    }
+    :focus { outline: none; }
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+      }
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
     }
     /* ============================================================
        3. Shell: navbar, layout, sidebar
@@ -163,11 +232,13 @@
       width: 48px;
     }
     .sidebar.collapsed .cluster-item .name,
-    .sidebar.collapsed .cluster-item .cluster-actions {
+    .sidebar.collapsed .cluster-item .cluster-actions,
+    .sidebar.collapsed .status-label {
       display: none;
     }
     .cluster-item .status-dot.healthy { background: var(--green); }
-    .cluster-item .status-dot.stale { background: var(--red); }
+    .cluster-item .status-dot.stale { background: var(--yellow); }
+    .cluster-item .status-dot.offline { background: var(--red); }
     .cluster-item .name { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cluster-item .ago { font-size: 0.75rem; color: var(--text-muted); }
     /* Sidebar delete UX: subtle red icon, only visible on hover */
@@ -799,24 +870,118 @@
     .token-block .token-row .token-actions { display: flex; gap: 8px; flex-shrink: 0; }
     .token-block .inline-error { color: var(--red); margin-top: 8px; }
     .token-block .view-cluster-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+    /* ============================================================
+       8. Shell: header, status, section nav, shared states
+       ============================================================ */
+    .topbar { gap: var(--space-3); flex-wrap: wrap; }
+    .brand { font-size: var(--text-lg); letter-spacing: 0; }
+    .cluster-switcher {
+      background: var(--bg-dark);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3);
+      font: inherit;
+      min-width: 180px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin: 0;
+      font-size: var(--text-sm);
+      color: var(--text);
+    }
+    .status .status-dot { width: 8px; height: 8px; }
+    .status-dot.healthy { background: var(--green); }
+    .status-dot.stale { background: var(--yellow); }
+    .status-dot.offline { background: var(--red); }
+    .topbar-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex-wrap: wrap; }
+    .refresh-indicator { font-size: var(--text-xs); color: var(--text-muted); opacity: 0; transition: opacity var(--duration) ease; }
+    #tabs { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+    .section-nav { margin-bottom: var(--space-4); }
+    .section-nav-wide { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center; }
+    .nav-group { display: flex; align-items: center; gap: var(--space-1); }
+    .nav-label {
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: var(--space-1);
+    }
+    .section-link {
+      background: transparent;
+      color: var(--text-muted);
+      border: 0;
+      border-bottom: 1px solid transparent;
+      border-radius: 0;
+      padding: var(--space-2) var(--space-1);
+      font: inherit;
+      cursor: pointer;
+    }
+    .section-link:hover { color: var(--text); }
+    .section-link.active { color: var(--text); border-bottom-color: var(--accent); }
+    .section-nav-compact { display: none; margin-top: var(--space-2); }
+    .section-nav-compact select { width: 100%; }
+    .notice {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--bg-card);
+      margin-bottom: var(--space-4);
+      color: var(--text);
+    }
+    .notice[hidden] { display: none; }
+    .notice-warn { border-color: var(--yellow); }
+    .skeleton-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-4); }
+    .skeleton {
+      height: 72px;
+      border-radius: var(--radius-lg);
+      background: var(--bg-hover);
+    }
+    .empty-state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); }
+    .empty-state h2 { color: var(--text); font-size: var(--text-lg); font-weight: 600; }
+    @media (max-width: 720px) {
+      .section-nav-wide { display: none; }
+      .section-nav-compact { display: block; }
+      .cluster-switcher, .access-key { width: 100%; min-width: 0; }
+      .sidebar { width: 56px; min-width: 56px; }
+      .sidebar .sidebar-title,
+      .sidebar .cluster-item .name,
+      .sidebar .cluster-item .cluster-actions,
+      .sidebar .cluster-item .cluster-meta-line,
+      .sidebar .status-label { display: none; }
+      .sidebar .cluster-item .short-name { display: block; }
+    }
   </style>
 </head>
 <body>
   <!-- shell: navbar -->
-  <nav class="navbar">
+  <nav class="navbar topbar" aria-label="Dashboard">
     <div class="navbar-left">
-      <h1>K8s Dashboard</h1>
+      <h1 class="brand">KubePulse</h1>
       <span class="clusters-badge" id="clustersBadge">0 clusters</span>
     </div>
-    <span id="refreshIndicator" style="
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      opacity: 0;
-      transition: opacity 0.3s ease;
-      margin-right: 8px;
-    ">↻ Refreshing...</span>
-    <input type="password" class="access-key" id="accessKey" placeholder="Access key" autocomplete="off" aria-label="Access key" />
-    <button class="btn-refresh" id="btnRefresh" type="button">Refresh Now</button>
+    <label class="sr-only" for="clusterSwitcher">Cluster</label>
+    <select class="cluster-switcher" id="clusterSwitcher" aria-label="Cluster">
+      <option value="">No clusters</option>
+    </select>
+    <p class="status" id="clusterStatus" hidden>
+      <span class="status-dot" id="clusterStatusDot"></span>
+      <span id="clusterStatusText"></span>
+    </p>
+    <div class="topbar-actions">
+      <span id="refreshIndicator" class="refresh-indicator">Refreshing</span>
+      <input type="password" class="access-key" id="accessKey" placeholder="Access key" autocomplete="off" aria-label="Access key" />
+      <button class="btn-refresh" id="themeToggle" type="button" aria-label="Theme: system">System</button>
+      <button class="btn-primary" id="mainTabAdd" data-page="add" type="button">Add cluster</button>
+      <button class="btn-refresh" id="btnRefresh" type="button">Refresh</button>
+      <button class="main-tab sr-only" data-page="cluster" id="mainTabCluster" type="button">Cluster</button>
+    </div>
   </nav>
 
   <!-- shell: sidebar + pages -->
@@ -830,11 +995,7 @@
       </div>
     </aside>
 
-    <div class="main-content">
-      <div class="main-tabs">
-        <button class="main-tab" data-page="cluster" id="mainTabCluster" type="button">Cluster</button>
-        <button class="main-tab active" data-page="add" id="mainTabAdd" type="button">➕ Add Cluster</button>
-      </div>
+    <main class="main-content">
 
       <!-- page: add cluster -->
       <div id="pageAdd" class="container add-cluster-panel">
@@ -877,11 +1038,70 @@
         <div id="dashboardUrlWarning" style="margin-top:16px; color: var(--yellow); font-size: 0.875rem; display:none;"></div>
       </div>
 
+      <div id="appNotice" class="notice" hidden role="status">
+        <p id="appNoticeText" style="margin:0;"></p>
+        <button type="button" class="btn-secondary" id="appNoticeRetry" hidden>Retry</button>
+      </div>
+
       <!-- page: selected cluster -->
       <div id="pageCluster" class="container" style="display:none;">
-        <div id="staleBanner" class="stale-banner" style="display:none;">⚠ No data received from this cluster in the last 90 seconds</div>
+        <div id="staleBanner" class="notice notice-warn" style="display:none;" role="status">
+          <span class="status"><span class="status-dot stale"></span><span>Stale</span></span>
+          <span>No heartbeat in 90s.</span>
+        </div>
         <div class="summary-row" id="summaryRow"></div>
         <div id="globalFilterBar" style="display:none;"></div>
+        <nav class="section-nav" aria-label="Cluster sections">
+          <div class="section-nav-wide">
+            <button class="section-link" type="button" data-tab="graphs">Overview</button>
+            <div class="nav-group" role="group" aria-label="Workloads">
+              <span class="nav-label">Workloads</span>
+              <button class="section-link" type="button" data-tab="pods">Pods</button>
+              <button class="section-link" type="button" data-tab="deployments">Deployments</button>
+            </div>
+            <div class="nav-group" role="group" aria-label="Network">
+              <span class="nav-label">Network</span>
+              <button class="section-link" type="button" data-tab="services">Services</button>
+              <button class="section-link" type="button" data-tab="ingresses">Ingresses</button>
+            </div>
+            <div class="nav-group" role="group" aria-label="Nodes">
+              <span class="nav-label">Nodes</span>
+              <button class="section-link" type="button" data-tab="nodes">Nodes</button>
+              <button class="section-link" type="button" data-tab="retired">Retired</button>
+            </div>
+            <div class="nav-group" role="group" aria-label="Config">
+              <span class="nav-label">Config</span>
+              <button class="section-link" type="button" data-tab="namespaces">Namespaces</button>
+              <button class="section-link" type="button" data-tab="configmaps">ConfigMaps</button>
+            </div>
+            <button class="section-link" type="button" data-tab="cost">Cost</button>
+            <button class="section-link" type="button" data-tab="scaling">Scaling</button>
+          </div>
+          <label class="section-nav-compact">
+            <span class="sr-only">Section</span>
+            <select id="sectionSelect" aria-label="Section">
+              <optgroup label="Overview"><option value="graphs">Overview</option></optgroup>
+              <optgroup label="Workloads">
+                <option value="pods">Pods</option>
+                <option value="deployments">Deployments</option>
+              </optgroup>
+              <optgroup label="Network">
+                <option value="services">Services</option>
+                <option value="ingresses">Ingresses</option>
+              </optgroup>
+              <optgroup label="Nodes">
+                <option value="nodes">Nodes</option>
+                <option value="retired">Retired nodes</option>
+              </optgroup>
+              <optgroup label="Config">
+                <option value="namespaces">Namespaces</option>
+                <option value="configmaps">ConfigMaps</option>
+              </optgroup>
+              <optgroup label="Cost"><option value="cost">Cost</option></optgroup>
+              <optgroup label="Scaling"><option value="scaling">Scaling</option></optgroup>
+            </select>
+          </label>
+        </nav>
         <div class="tabs" id="tabs"></div>
         <div id="tabPanels"></div>
         <div class="footer-bar">
@@ -890,10 +1110,11 @@
       </div>
 
       <!-- page: no cluster selected -->
-      <div id="pageClusterPlaceholder" class="view-placeholder" style="display:none;">
-        Select a cluster from the sidebar or add a new one.
+      <div id="pageClusterPlaceholder" class="empty-state" style="display:none;">
+        <h2>No cluster selected</h2>
+        <p>Choose a cluster, or add one.</p>
       </div>
-    </div>
+    </main>
   </div>
 
   <div class="loading-overlay hidden" id="loadingOverlay">
@@ -1040,6 +1261,77 @@
       if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
       if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
       return Math.floor(sec / 86400) + 'd ago';
+    }
+
+    function clusterHealth(c) {
+      if (!c || c.status === 'pending' || !c.last_seen) return 'offline';
+      const age = (Date.now() - new Date(c.last_seen).getTime()) / 1000;
+      if (!Number.isFinite(age)) return 'offline';
+      if (c.is_healthy && age <= HEALTHY_SECONDS) return 'healthy';
+      if (age <= 600) return 'stale';
+      return 'offline';
+    }
+    function statusWord(kind) {
+      if (kind === 'healthy') return 'Healthy';
+      if (kind === 'stale') return 'Stale';
+      return 'Offline';
+    }
+    function updateClusterStatus() {
+      const host = el('clusterStatus');
+      const dot = el('clusterStatusDot');
+      const text = el('clusterStatusText');
+      if (!host || !dot || !text) return;
+      const cluster = clustersList.find(c => c.name === selectedCluster);
+      if (!cluster) {
+        host.hidden = true;
+        return;
+      }
+      const kind = clusterHealth(cluster);
+      host.hidden = false;
+      host.className = 'status status-' + kind;
+      dot.className = 'status-dot ' + kind;
+      text.textContent = statusWord(kind);
+    }
+    function renderClusterSwitcher() {
+      const sel = el('clusterSwitcher');
+      if (!sel) return;
+      const names = clustersList.map(c => c.name);
+      sel.replaceChildren();
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = names.length ? 'Select a cluster' : 'No clusters';
+      sel.appendChild(blank);
+      names.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      });
+      sel.value = selectedCluster && names.indexOf(selectedCluster) !== -1 ? selectedCluster : '';
+      updateClusterStatus();
+    }
+    function showNotice(message, opts) {
+      const box = el('appNotice');
+      const text = el('appNoticeText');
+      const retry = el('appNoticeRetry');
+      if (!box || !text) return;
+      text.textContent = message;
+      box.hidden = false;
+      if (retry) retry.hidden = !(opts && opts.retry);
+    }
+    function hideNotice() {
+      const box = el('appNotice');
+      if (box) box.hidden = true;
+    }
+    function syncSectionNav(tabId) {
+      qsa('.section-link').forEach(btn => {
+        const on = btn.dataset.tab === tabId;
+        btn.classList.toggle('active', on);
+        if (on) btn.setAttribute('aria-current', 'page');
+        else btn.removeAttribute('aria-current');
+      });
+      const sel = el('sectionSelect');
+      if (sel && tabId && sel.value !== tabId) sel.value = tabId;
     }
 
     function formatAgeShort(iso) {
@@ -1380,8 +1672,8 @@
 
       const shortName = getClusterShortName(c.name);
       return `
-        <div class="cluster-item ${isActive ? 'active' : ''}" data-cluster="${escapeAttr(c.name)}" title="${escapeAttr(c.name)}">
-          <span class="status-dot ${c.is_healthy ? 'healthy' : 'stale'}"></span>
+        <div class="cluster-item ${isActive ? 'active' : ''}" data-cluster="${escapeAttr(c.name)}" title="${escapeAttr(c.name)}" aria-label="${escapeAttr(c.name + ', ' + statusWord(clusterHealth(c)))}">
+          <span class="status"><span class="status-dot ${clusterHealth(c)}"></span><span class="status-label">${escapeHtml(statusWord(clusterHealth(c)))}</span></span>
           <span class="short-name">${escapeHtml(shortName)}</span>
           <span class="name">${escapeHtml(c.name)}</span>
           <span class="cluster-actions">
@@ -1400,6 +1692,7 @@
         listEl.innerHTML = '';
         emptyEl.style.display = 'block';
         el('clustersBadge').textContent = '0 clusters';
+        renderClusterSwitcher();
         return;
       }
       emptyEl.style.display = 'none';
@@ -1417,6 +1710,7 @@
           showInlineDeleteConfirm(item);
         });
       });
+      renderClusterSwitcher();
     }
 
     /* --- auth (key stays in memory) --- */
@@ -1564,13 +1858,14 @@
       const emptyEl = el('sidebarEmpty');
       try {
         const r = await fetch('/api/clusters', { headers: authHeaders() });
-        if (r.status === 401) {
+        if (r.status === 401 || r.status === 403) {
           clustersList = [];
           if (emptyEl) {
             emptyEl.textContent = adminKey
               ? 'Access key was rejected.'
               : 'Enter an access key to view clusters.';
           }
+          showNotice(adminKey ? 'That access key was rejected. Enter your access key.' : 'Enter your access key.');
           renderClusterSidebar();
           return;
         }
@@ -1579,6 +1874,7 @@
           if (emptyEl && !clustersList.length) {
             emptyEl.textContent = 'No clusters connected yet. Install the Helm chart on a cluster to get started.';
           }
+          hideNotice();
           renderClusterSidebar();
           if (selectedCluster && !clustersList.find(c => c.name === selectedCluster)) {
             selectedCluster = clustersList.length ? clustersList[0].name : null;
@@ -1586,7 +1882,7 @@
           }
         }
       } catch (e) {
-        console.warn('fetchClusters failed', e);
+        showNotice('Could not reach the dashboard.', { retry: true });
       }
     }
 
@@ -1844,6 +2140,7 @@
       if (tabButton) tabButton.classList.add('active');
       const activePanel = el('tab-' + tabId);
       if (activePanel) activePanel.classList.add('active');
+      syncSectionNav(tabId);
 
       // Re-render tables if filters changed (or to ensure fresh handlers).
       renderGlobalFilterBar();
@@ -3628,6 +3925,9 @@
     let _cache = {};
     async function fetchClusterData() {
       if (!selectedCluster) return;
+      if (el('summaryRow') && !el('summaryRow').querySelector('.card')) {
+        el('summaryRow').innerHTML = '<div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+      }
       try {
         const TAB_IDS_TO_FETCH = RESOURCE_TAB_IDS;
         const enc = encodeURIComponent(selectedCluster);
@@ -3643,6 +3943,10 @@
         const summaryRes = responses[0];
         const resourceResults = responses.slice(1, 1 + TAB_IDS_TO_FETCH.length);
         const [costRes, scalingRes, retiredRes, fleetCostRes] = responses.slice(1 + TAB_IDS_TO_FETCH.length);
+        if (summaryRes.status === 401 || summaryRes.status === 403) {
+          showNotice('Enter your access key.');
+          return;
+        }
         const summary = summaryRes.ok ? await summaryRes.json() : {};
         _cache.summary = summary;
         const results = await Promise.all(resourceResults.map(r => r.ok ? r.json() : {}));
@@ -3656,12 +3960,13 @@
         const lastSeen = clusterMeta && clusterMeta.last_seen ? new Date(clusterMeta.last_seen).getTime() : 0;
         const stale = lastSeen && (Date.now() - lastSeen) / 1000 > HEALTHY_SECONDS;
         el('staleBanner').style.display = stale ? 'block' : 'none';
+        hideNotice();
         renderSummary(summary);
         renderGlobalFilterBar();
         TAB_IDS.forEach(id => renderTabContent(id, _cache[id]));
         updateLastUpdated();
       } catch (e) {
-        console.warn('fetchClusterData failed', e);
+        showNotice('Could not reach the dashboard.', { retry: true });
       }
       const ind = el('refreshIndicator');
       if (ind) {
@@ -3695,10 +4000,12 @@
           qsa('.tab-panel').forEach(p => p.classList.remove('active'));
           btn.classList.add('active');
           el('tab-' + btn.dataset.tab).classList.add('active');
+          syncSectionNav(btn.dataset.tab);
         });
       });
       qs('.tab').classList.add('active');
       qs('.tab-panel').classList.add('active');
+      syncSectionNav('graphs');
       TAB_IDS.forEach(id => {
         const input = el('filter-' + id);
         if (input) {
@@ -3876,6 +4183,56 @@
     });
     el('mainTabAdd').addEventListener('click', () => {
       showAddClusterPage();
+    });
+
+    let themeChoice = 'system';
+    function applyTheme() {
+      const root = document.documentElement;
+      if (themeChoice === 'system') root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', themeChoice);
+      const btn = el('themeToggle');
+      if (!btn) return;
+      const word = themeChoice === 'system' ? 'System' : themeChoice === 'light' ? 'Light' : 'Dark';
+      btn.textContent = word;
+      btn.setAttribute('aria-label', 'Theme: ' + themeChoice);
+    }
+    applyTheme();
+    el('themeToggle').addEventListener('click', () => {
+      themeChoice = themeChoice === 'system' ? 'light' : themeChoice === 'light' ? 'dark' : 'system';
+      applyTheme();
+    });
+
+    el('clusterSwitcher').addEventListener('change', () => {
+      const name = el('clusterSwitcher').value;
+      if (name) selectCluster(name);
+      else showPlaceholderPage();
+    });
+
+    qsa('.section-link').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = qs('.tab[data-tab="' + CSS.escape(btn.dataset.tab) + '"]');
+        if (tab) tab.click();
+      });
+    });
+    el('sectionSelect').addEventListener('change', () => {
+      const tab = qs('.tab[data-tab="' + CSS.escape(el('sectionSelect').value) + '"]');
+      if (tab) tab.click();
+    });
+    el('appNoticeRetry').addEventListener('click', () => {
+      fetchClusters().then(() => { if (selectedCluster) return fetchClusterData(); });
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        collapseAllExpanded();
+        return;
+      }
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+      const search = el('globalLabelFilter') || qs('.tab-panel.active .filter-input');
+      if (!search || search.offsetParent === null) return;
+      e.preventDefault();
+      search.focus();
     });
 
     // --- Config: DASHBOARD_URL warning ---
