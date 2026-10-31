@@ -82,7 +82,7 @@ class TestPendingRegistration(unittest.TestCase):
         reg = self._register(client, first["token"])
         cred1 = reg["cluster_credential"]
 
-        clusters = client.get("/api/clusters").get_json()
+        clusters = client.get("/api/clusters", headers=ADMIN).get_json()
         self.assertEqual(len(clusters), 1)
         self.assertEqual(clusters[0]["status"], "pending")
         self.assertFalse(clusters[0]["is_healthy"])
@@ -99,7 +99,7 @@ class TestPendingRegistration(unittest.TestCase):
         reg2 = self._register(client, second["token"])
         cred2 = reg2["cluster_credential"]
         self.assertNotEqual(cred1, cred2)
-        self.assertEqual(len(client.get("/api/clusters").get_json()), 1)
+        self.assertEqual(len(client.get("/api/clusters", headers=ADMIN).get_json()), 1)
 
         self.assertEqual(self._heartbeat(client, "prod", cred1).status_code, 401)
         self.assertEqual(
@@ -108,7 +108,7 @@ class TestPendingRegistration(unittest.TestCase):
         )
         self.assertEqual(self._heartbeat(client, "prod", cred2).status_code, 200)
 
-        clusters = client.get("/api/clusters").get_json()
+        clusters = client.get("/api/clusters", headers=ADMIN).get_json()
         self.assertEqual(clusters[0]["status"], "active")
         taken = client.post(
             "/api/generate-token",
@@ -141,7 +141,7 @@ class TestPendingRegistration(unittest.TestCase):
         # A later heartbeat that still uses the typed name resolves to the same cluster.
         mixed = self._heartbeat(client, "Production", body["cluster_credential"])
         self.assertEqual(mixed.status_code, 200)
-        self.assertEqual(len(client.get("/api/clusters").get_json()), 1)
+        self.assertEqual(len(client.get("/api/clusters", headers=ADMIN).get_json()), 1)
 
         rejected = client.post(
             "/api/generate-token",
@@ -177,7 +177,7 @@ class TestPendingRegistration(unittest.TestCase):
                 headers={"X-Registration-Token": token},
             )
         self.assertEqual(failed.status_code, 500)
-        self.assertEqual(client.get("/api/clusters").get_json(), [])
+        self.assertEqual(client.get("/api/clusters", headers=ADMIN).get_json(), [])
         retried = self._register(client, token)
         self.assertTrue(retried["cluster_credential"])
 
@@ -199,7 +199,7 @@ class TestPendingRegistration(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         rejected = self._heartbeat(client, "legacy", "master-bootstrap-key")
         self.assertIn(rejected.status_code, (401, 400))
-        self.assertEqual(client.get("/api/clusters").get_json(), [])
+        self.assertEqual(client.get("/api/clusters", headers=ADMIN).get_json(), [])
 
 
 class TestAgentSaveFailure(unittest.TestCase):

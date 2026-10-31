@@ -155,14 +155,14 @@ gcloud run deploy kubepulse-dashboard \
   --image dhruvmistry200/kubepulse-dashboard:latest \
   --platform managed \
   --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars SECRET_KEY=change-me-to-a-strong-secret \
   --set-env-vars ADMIN_KEY=change-me-to-admin-key \
+  --set-env-vars VIEWER_KEY=change-me-to-viewer-key \
+  --set-env-vars SECRET_KEY=change-me-to-a-legacy-heartbeat-key \
   --port 8080
 ```
 
 Cloud Run provides an HTTPS URL immediately.  
-Note this URL; you will use it in Step 3.
+Note this URL; you will use it in Step 3. The service must stay reachable by the browser and the agent. API reads require `VIEWER_KEY` or `ADMIN_KEY`; do not rely on an open read API.
 
 #### Option B – Docker on any VM
 
@@ -171,16 +171,18 @@ Note this URL; you will use it in Step 3.
 docker run -d \
   --name kubepulse-dashboard \
   -p 8080:8080 \
-  -e SECRET_KEY=change-me-to-a-strong-secret \
   -e ADMIN_KEY=change-me-to-admin-key \
+  -e VIEWER_KEY=change-me-to-viewer-key \
+  -e SECRET_KEY=change-me-to-a-legacy-heartbeat-key \
   dhruvmistry200/kubepulse-dashboard:latest
 
 ## Using GHCR
 docker run -d \
   --name kubepulse-dashboard \
   -p 8080:8080 \
-  -e SECRET_KEY=change-me-to-a-strong-secret \
   -e ADMIN_KEY=change-me-to-admin-key \
+  -e VIEWER_KEY=change-me-to-viewer-key \
+  -e SECRET_KEY=change-me-to-a-legacy-heartbeat-key \
   ghcr.io/dhruvmistry200/kubepulse-dashboard:latest
 ```
 
@@ -196,8 +198,9 @@ kubectl create deployment kubepulse-dashboard \
 
 ```bash
 kubectl set env deployment/kubepulse-dashboard \
-  SECRET_KEY=change-me-to-a-strong-secret \
-  ADMIN_KEY=change-me-to-admin-key
+  ADMIN_KEY=change-me-to-admin-key \
+  VIEWER_KEY=change-me-to-viewer-key \
+  SECRET_KEY=change-me-to-a-legacy-heartbeat-key
 ```
 
 ```bash
@@ -211,7 +214,7 @@ kubectl expose deployment kubepulse-dashboard \
 
 1. Open your dashboard URL in a browser.
 2. Click the **➕ Add Cluster** tab.
-3. Enter the `ADMIN_KEY` you set in Step 2.
+3. Enter the access key you set in Step 2 (`VIEWER_KEY` to view, `ADMIN_KEY` to add or delete).
 4. Enter a name for your cluster (for example, `production`, `staging`, `dev`).
 5. Click **Generate Install Token**.
 6. Copy the generated Helm command and run it against your cluster. The chart stores the token, dashboard URL, and cluster name in a Secret:
@@ -280,8 +283,9 @@ You can also delete a cluster using the 🗑 button in the dashboard sidebar.
 
 | Variable    | Required | Default      | Description                         |
 |------------|----------|--------------|-------------------------------------|
-| SECRET_KEY | Yes      | auto-generated | Master/bootstrap key (admin + legacy) |
-| ADMIN_KEY  | No       | = SECRET_KEY | Key used to generate tokens         |
+| ADMIN_KEY  | Yes      | — | Required to start. Token generation, cluster deletion, and reads |
+| VIEWER_KEY | No       | — | Read-only key for `GET /api/*`. `ADMIN_KEY` can also read |
+| SECRET_KEY | No       | — | Legacy heartbeat key only. Not printed. Not accepted as an admin or viewer key |
 | PORT       | No       | 8080         | Port the dashboard listens on       |
 | STORAGE_BACKEND | No  | `file`       | Cluster registry: `file` or `gcs`   |
 | STORAGE_PATH | No     | `/data/kubepulse/registry.json` | Registry file path |
@@ -523,9 +527,10 @@ No new `registrationToken` is required when credential persistence is enabled (d
 
 | Layer              | Protects           | Used by            |
 |--------------------|-------------------|--------------------|
-| ADMIN_KEY          | Token generation  | Admin browser only |
+| ADMIN_KEY          | Token generation, deletion, and reads | Admin browser |
+| VIEWER_KEY         | `GET /api/*`      | Browser, read-only |
 | REGISTRATION_TOKEN | `POST /register`  | Agent (one-time)   |
-| SECRET_KEY         | Admin/bootstrap   | Dashboard (not sent to agents after registration) |
+| SECRET_KEY         | Legacy heartbeats | Already-active clusters only |
 | cluster_credential | `POST /heartbeat` | Agent (per-cluster, persisted)  |
 
 ---
@@ -626,7 +631,7 @@ The Cloud Run service account needs `roles/storage.objectAdmin` on the bucket.
 - **Verify `dashboardUrl`:** Confirm it is correct and reachable from the cluster.
 - **First install only:** Ensure the registration token has not expired (10 minute limit).
 - **After redeploy:** Check agent logs for `resumed from stored credential` — no new token is needed.
-- **Dashboard config:** Verify `SECRET_KEY` is set on the dashboard (bootstrap/admin only).
+- **Dashboard config:** `ADMIN_KEY` must be set or the process exits. `SECRET_KEY` is only the legacy heartbeat key.
 
 ### Token expired before running `helm install`
 

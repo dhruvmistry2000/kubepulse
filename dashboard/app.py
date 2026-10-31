@@ -1,10 +1,10 @@
 """
 K8s Dashboard - Central hub. Agents PUSH data TO this dashboard.
 
-- On startup: read or generate SECRET_KEY; persistent cluster registry; in-memory live metrics.
+- On startup: require ADMIN_KEY (unless debug). SECRET_KEY is legacy heartbeats only.
 - POST /api/register: agent registers with one-time token, receives per-cluster credential.
 - POST /api/heartbeat: agent sends cluster data (X-Secret-Key = per-cluster credential).
-- GET /api/clusters, GET /api/cluster/<name>/*: browser and UI.
+- GET /api/*: browser and UI, with the viewer key or ADMIN_KEY.
 - POST /api/generate-token: admin generates one-time registration token (ADMIN_KEY).
 """
 
@@ -13,23 +13,30 @@ import secrets
 import threading
 import time
 from datetime import datetime, timezone, timedelta
+from functools import wraps
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, make_response
 
-from storage import RegistryStore
+from storage import RegistryStore, secrets_equal
 from common.cluster_name import normalize_cluster_name
 from history import HistoryStore
 from pricing import PriceLookup, enrich_nodes_with_cost, compute_cost_summary
 
 app = Flask(__name__)
 
-# --- Config ---
-SECRET_KEY = (os.environ.get("SECRET_KEY") or "").strip()
-if not SECRET_KEY:
-    SECRET_KEY = secrets.token_hex(32)
-    print("INFO: Generated SECRET_KEY: %s  — set this as SECRET_KEY env var to persist across restarts" % SECRET_KEY, flush=True)
+def _env_flag(name):
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
 
-ADMIN_KEY = (os.environ.get("ADMIN_KEY") or "").strip() or SECRET_KEY
+
+# --- Config ---
+# SECRET_KEY is the deprecated heartbeat credential for clusters registered
+# before per-cluster credentials. It is never generated, printed, or used as ADMIN_KEY.
+SECRET_KEY = (os.environ.get("SECRET_KEY") or "").strip()
+ADMIN_KEY = (os.environ.get("ADMIN_KEY") or "").strip()
+VIEWER_KEY = (os.environ.get("VIEWER_KEY") or "").strip()
+DEBUG_MODE = _env_flag("FLASK_DEBUG") or _env_flag("DEBUG")
+if not ADMIN_KEY and not DEBUG_MODE:
+    raise SystemExit("ADMIN_KEY is required. Refusing to start.")
 DASHBOARD_URL = (os.environ.get("DASHBOARD_URL") or "").strip()
 AGENT_IMAGE = os.environ.get(
     "AGENT_IMAGE",
@@ -81,13 +88,40 @@ _cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True)
 _cleanup_thread.start()
 
 
+def _presented_secrets():
+    values = []
+    for header in ("X-Api-Key", "X-Admin-Key", "X-Viewer-Key"):
+        value = (request.headers.get(header) or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def _has_admin():
+    return any(secrets_equal(value, ADMIN_KEY) for value in _presented_secrets())
+
+
+def _has_reader():
+    if _has_admin():
+        return True
+    return any(secrets_equal(value, VIEWER_KEY) for value in _presented_secrets())
+
+
 def _require_admin(f):
-    """Decorator: require X-Admin-Key header to match ADMIN_KEY."""
-    from functools import wraps
+    """Decorator: require the admin key. The viewer key is not enough."""
     @wraps(f)
     def wrapped(*args, **kwargs):
-        key = request.headers.get("X-Admin-Key")
-        if not key or key != ADMIN_KEY:
+        if not _has_admin():
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return wrapped
+
+
+def _require_reader(f):
+    """Decorator: require the viewer key or the admin key."""
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not _has_reader():
             return jsonify({"error": "Unauthorized"}), 401
         return f(*args, **kwargs)
     return wrapped
@@ -106,7 +140,7 @@ def _legacy_key_authorizes(cluster_name, key):
     Pending clusters are excluded so the global key cannot finish registration.
     """
     global _legacy_key_warned
-    if not key or key != SECRET_KEY or not registry.is_active(cluster_name):
+    if not secrets_equal(key, SECRET_KEY) or not registry.is_active(cluster_name):
         return False
     if not _legacy_key_warned:
         _legacy_key_warned = True
@@ -120,9 +154,40 @@ def _legacy_key_authorizes(cluster_name, key):
 
 # --- Routes ---
 
+def _sanitize_live_payload(data):
+    """Drop ConfigMap values and annotation values before they are stored."""
+    if not isinstance(data, dict):
+        return {}
+    for pod in data.get("pods") or []:
+        if isinstance(pod, dict) and isinstance(pod.get("annotations"), dict):
+            pod["annotations"] = {str(key): "[redacted]" for key in pod["annotations"]}
+    for configmap in data.get("configmaps") or []:
+        if not isinstance(configmap, dict):
+            continue
+        configmap.pop("data", None)
+        configmap.pop("binaryData", None)
+    return data
+
+
+def _content_security_policy(nonce):
+    return (
+        "default-src 'self'; "
+        f"script-src 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    nonce = secrets.token_urlsafe(16)
+    response = make_response(render_template("index.html", csp_nonce=nonce))
+    response.headers["Content-Security-Policy"] = _content_security_policy(nonce)
+    return response
 
 
 # --- Registration (agent sends one-time token) ---
@@ -207,7 +272,7 @@ def api_heartbeat():
 
     agent_version = body.get("agent_version")
     registry.touch_cluster(cluster_name, agent_version=agent_version)
-    data = body.get("data") or {}
+    data = _sanitize_live_payload(body.get("data") or {})
     nodes = data.get("nodes") or []
     enrich_nodes_with_cost(nodes, _price_lookup)
     data["nodes"] = nodes
@@ -323,12 +388,14 @@ def api_pending_tokens():
 # --- Browser / UI API ---
 
 @app.route("/api/config")
+@_require_reader
 def api_config():
     """Public config for UI (e.g. whether DASHBOARD_URL is set for helm command)."""
     return jsonify({"dashboardUrl": DASHBOARD_URL or ""}), 200
 
 
 @app.route("/api/clusters")
+@_require_reader
 def api_clusters():
     now = _now()
     result = []
@@ -387,6 +454,7 @@ def _cluster_data(cluster_name, key):
 
 
 @app.route("/api/cluster/<cluster_name>/nodes")
+@_require_reader
 def api_cluster_nodes(cluster_name):
     out, status = _cluster_data(cluster_name, "nodes")
     if out is None:
@@ -395,6 +463,7 @@ def api_cluster_nodes(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/pods")
+@_require_reader
 def api_cluster_pods(cluster_name):
     out, status = _cluster_data(cluster_name, "pods")
     if out is None:
@@ -403,6 +472,7 @@ def api_cluster_pods(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/deployments")
+@_require_reader
 def api_cluster_deployments(cluster_name):
     out, status = _cluster_data(cluster_name, "deployments")
     if out is None:
@@ -411,6 +481,7 @@ def api_cluster_deployments(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/services")
+@_require_reader
 def api_cluster_services(cluster_name):
     out, status = _cluster_data(cluster_name, "services")
     if out is None:
@@ -419,6 +490,7 @@ def api_cluster_services(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/ingresses")
+@_require_reader
 def api_cluster_ingresses(cluster_name):
     out, status = _cluster_data(cluster_name, "ingresses")
     if out is None:
@@ -427,6 +499,7 @@ def api_cluster_ingresses(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/namespaces")
+@_require_reader
 def api_cluster_namespaces(cluster_name):
     out, status = _cluster_data(cluster_name, "namespaces")
     if out is None:
@@ -435,6 +508,7 @@ def api_cluster_namespaces(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/configmaps")
+@_require_reader
 def api_cluster_configmaps(cluster_name):
     out, status = _cluster_data(cluster_name, "configmaps")
     if out is None:
@@ -443,6 +517,7 @@ def api_cluster_configmaps(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/summary")
+@_require_reader
 def api_cluster_summary(cluster_name):
     out, status = _cluster_data(cluster_name, "summary")
     if out is None:
@@ -451,6 +526,7 @@ def api_cluster_summary(cluster_name):
 
 
 @app.route("/api/cluster/<cluster_name>/cost")
+@_require_reader
 def api_cluster_cost(cluster_name):
     cluster_name = _existing_cluster(cluster_name)
     if not cluster_name:
@@ -463,6 +539,7 @@ def api_cluster_cost(cluster_name):
 
 
 @app.route("/api/cost")
+@_require_reader
 def api_fleet_cost():
     with _clusters_lock:
         snapshot = dict(live_data)
@@ -470,6 +547,7 @@ def api_fleet_cost():
 
 
 @app.route("/api/cluster/<cluster_name>/scaling")
+@_require_reader
 def api_cluster_scaling(cluster_name):
     cluster_name = _existing_cluster(cluster_name)
     if not cluster_name:
@@ -478,17 +556,20 @@ def api_cluster_scaling(cluster_name):
 
 
 @app.route("/api/scaling")
+@_require_reader
 def api_fleet_scaling():
     return jsonify({"scaling": history.get_scaling()}), 200
 
 
 @app.route("/api/retired-nodes")
+@_require_reader
 def api_retired_nodes():
     cluster = (request.args.get("cluster") or "").strip() or None
     return jsonify({"items": history.get_retired_nodes(cluster)}), 200
 
 
 @app.route("/api/cluster/<cluster_name>/retired-nodes")
+@_require_reader
 def api_cluster_retired_nodes(cluster_name):
     cluster_name = _existing_cluster(cluster_name)
     if not cluster_name:

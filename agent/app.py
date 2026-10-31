@@ -516,7 +516,7 @@ def collect_pods():
                     for cs in (p.status.container_statuses or [])
                 )
                 labels = dict(p.metadata.labels or {})
-                annotations = dict(p.metadata.annotations or {})
+                annotations = redact_annotations(p.metadata.annotations or {})
 
                 spec_containers = []
                 for c in p.spec.containers or []:
@@ -1036,6 +1036,24 @@ def collect_namespaces():
         return {"items": [], "error": str(e)}
 
 
+def configmap_key_stats(data, binary_data):
+    """Key names and UTF-8 sizes. Values are not returned."""
+    keys = []
+    for name, value in (data or {}).items():
+        text = value if isinstance(value, str) else ""
+        keys.append({"name": str(name), "size": len(text.encode("utf-8"))})
+    for name, value in (binary_data or {}).items():
+        text = value if isinstance(value, str) else ""
+        keys.append({"name": str(name), "size": len(text.encode("utf-8"))})
+    keys.sort(key=lambda item: item["name"])
+    return keys
+
+
+def redact_annotations(annotations):
+    """Keep annotation names and drop values."""
+    return {str(key): "[redacted]" for key in (annotations or {})}
+
+
 def collect_configmaps():
     if core_v1 is None:
         return {"items": [], "error": K8S_CONFIG_ERROR or "Kubernetes client not configured"}
@@ -1048,13 +1066,12 @@ def collect_configmaps():
                     continue
                 data = cm.data or {}
                 binary = cm.binary_data or {}
-                num_keys = len(data) + len(binary)
+                keys = configmap_key_stats(data, binary)
                 items.append({
                     "name": cm.metadata.name,
                     "namespace": cm.metadata.namespace,
-                    "keyCount": num_keys,
-                    "keys": sorted(list(data.keys()) + list(binary.keys())),
-                    "data": data,
+                    "keyCount": len(keys),
+                    "keys": keys,
                     "age": safe_iso(cm.metadata.creation_timestamp),
                 })
             except Exception:

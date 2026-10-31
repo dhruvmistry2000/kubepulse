@@ -7,6 +7,7 @@ Backends (STORAGE_BACKEND env):
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -46,6 +47,16 @@ def _now_iso():
 def hash_credential(credential):
     """Return SHA-256 hex digest of a per-cluster credential."""
     return hashlib.sha256(credential.encode("utf-8")).hexdigest()
+
+
+def secrets_equal(left, right):
+    """Constant-time equality for secret strings of any length."""
+    if not isinstance(left, str) or not isinstance(right, str) or not left or not right:
+        return False
+    return hmac.compare_digest(
+        hashlib.sha256(left.encode("utf-8")).digest(),
+        hashlib.sha256(right.encode("utf-8")).digest(),
+    )
 
 
 def generate_cluster_credential():
@@ -259,7 +270,7 @@ class RegistryStore:
             entry = self._clusters.get(cluster_name)
             if not entry:
                 return False
-            return entry.get("credentialHash") == hash_credential(credential)
+            return secrets_equal(entry.get("credentialHash") or "", hash_credential(credential))
 
     def touch_cluster(self, cluster_name, agent_version=None):
         """Update lastSeen (and optionally agent_version) for a known cluster."""

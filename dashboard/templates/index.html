@@ -44,6 +44,15 @@
       font-size: 0.8rem;
     }
     .navbar .clusters-badge.healthy { color: var(--green); }
+    .navbar .access-key {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      padding: 6px 8px;
+      font-size: 0.8rem;
+      width: 180px;
+    }
     .btn-refresh {
       background: var(--bg-hover);
       color: var(--text);
@@ -763,6 +772,7 @@
       transition: opacity 0.3s ease;
       margin-right: 8px;
     ">↻ Refreshing...</span>
+    <input type="password" class="access-key" id="accessKey" placeholder="Access key" autocomplete="off" aria-label="Access key" />
     <button class="btn-refresh" id="btnRefresh" type="button">Refresh Now</button>
   </nav>
 
@@ -772,7 +782,7 @@
       <div class="sidebar-title">Clusters</div>
       <div id="clusterList"></div>
       <div class="sidebar-empty" id="sidebarEmpty" style="display:none;">
-        No clusters connected yet. Install the Helm chart on a cluster to get started.
+        Enter an access key to view clusters.
       </div>
     </aside>
 
@@ -791,8 +801,8 @@
           <div class="validation" id="clusterNameValidation"></div>
         </div>
         <div class="form-group">
-          <label>Admin key (required to generate token)</label>
-          <input type="password" id="addAdminKey" placeholder="Same as SECRET_KEY or ADMIN_KEY env" />
+          <label>Access key (required)</label>
+          <input type="password" id="addAdminKey" placeholder="VIEWER_KEY to view, ADMIN_KEY to add or delete" autocomplete="off" />
         </div>
         <button class="btn-primary" id="btnGenerateToken" type="button" disabled>Generate Install Token</button>
 
@@ -846,7 +856,7 @@
     </div>
   </div>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     const TAB_IDS = ['graphs', 'nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps', 'cost', 'scaling', 'retired'];
     const RESOURCE_TAB_IDS = ['nodes', 'pods', 'deployments', 'services', 'ingresses', 'namespaces', 'configmaps'];
     const CLUSTERS_POLL_MS = 10000;
@@ -860,8 +870,7 @@
     let lastClusterFetchTime = 0;
     let tokenExpiresAt = null;
     let tokenCountdownInterval = null;
-    // Admin key entered in Add Cluster tab (persisted in-memory for this page).
-    // Used for both token generation and cluster deletion.
+    // Access key for this page only. Never written to localStorage.
     let adminKey = '';
     let addClusterCanonicalName = '';
 
@@ -1355,6 +1364,25 @@
       });
     }
 
+    function authHeaders(extra) {
+      const headers = Object.assign({}, extra || {});
+      if (adminKey) {
+        headers['X-Api-Key'] = adminKey;
+        headers['X-Admin-Key'] = adminKey;
+      }
+      return headers;
+    }
+
+    function setAccessKey(value) {
+      adminKey = value || '';
+      const nav = el('accessKey');
+      const add = el('addAdminKey');
+      if (nav && nav.value !== adminKey) nav.value = adminKey;
+      if (add && add.value !== adminKey) add.value = adminKey;
+      fetchClusters();
+      fetchConfig();
+    }
+
     function escapeAttr(s) {
       if (s == null) return '';
       const div = document.createElement('div');
@@ -1419,7 +1447,7 @@
         try {
           const r = await fetch('/api/cluster/' + encodeURIComponent(name), {
             method: 'DELETE',
-            headers: { 'X-Admin-Key': adminKey || '' },
+            headers: authHeaders(),
           });
           if (r.status === 401) {
             showInlineDeleteError(clusterItemEl, 'Wrong admin key');
@@ -1475,10 +1503,24 @@
     }
 
     async function fetchClusters() {
+      const emptyEl = el('sidebarEmpty');
       try {
-        const r = await fetch('/api/clusters');
+        const r = await fetch('/api/clusters', { headers: authHeaders() });
+        if (r.status === 401) {
+          clustersList = [];
+          if (emptyEl) {
+            emptyEl.textContent = adminKey
+              ? 'Access key was rejected.'
+              : 'Enter an access key to view clusters.';
+          }
+          renderClusterSidebar();
+          return;
+        }
         if (r.ok) {
           clustersList = await r.json();
+          if (emptyEl && !clustersList.length) {
+            emptyEl.textContent = 'No clusters connected yet. Install the Helm chart on a cluster to get started.';
+          }
           renderClusterSidebar();
           if (selectedCluster && !clustersList.find(c => c.name === selectedCluster)) {
             selectedCluster = clustersList.length ? clustersList[0].name : null;
@@ -2827,7 +2869,7 @@
               <div><strong>Memory:</strong> req ${escapeHtml(String(req.memory ?? '—'))} / lim ${escapeHtml(String(lim.memory ?? '—'))}</div>
               <div><strong>Ports:</strong> ${
                 (Array.isArray(c.ports) && c.ports.length)
-                  ? c.ports.map(p => `${p.containerPort}/${p.protocol || 'TCP'}`).join(', ')
+                  ? c.ports.map(p => escapeHtml(`${p.containerPort}/${p.protocol || 'TCP'}`)).join(', ')
                   : '—'
               }</div>
               <div><strong>Env Vars:</strong> <span style="color: var(--text-muted);">${envDisplay}</span></div>
@@ -3258,7 +3300,7 @@
               <td>${escapeHtml(ep.ip || '—')}</td>
               <td>${
                 (Array.isArray(ep.ports) && ep.ports.length)
-                  ? ep.ports.map(p => `${p.port}/${p.protocol || 'TCP'}`).join(', ')
+                  ? ep.ports.map(p => escapeHtml(`${p.port}/${p.protocol || 'TCP'}`)).join(', ')
                   : '—'
               }</td>
             </tr>
@@ -3336,23 +3378,13 @@
 
     function renderConfigMapDetails(c) {
       const keys = Array.isArray(c.keys) ? c.keys : [];
-      const data = c.data || {};
       const items = keys.length ? keys.map(k => {
-        const raw = data && Object.prototype.hasOwnProperty.call(data, k) ? String(data[k]) : null;
-        let displayVal = '[binary or large value]';
-        let canShow = false;
-        if (raw != null && !raw.startsWith('-----BEGIN') && raw.length <= 200) {
-          displayVal = raw;
-          canShow = true;
-        }
-        const valueHtml = canShow
-          ? `<pre style="background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-size: 0.75rem; overflow-x:auto;">${escapeHtml(displayVal)}</pre>
-             <button type="button" class="btn-secondary" style="margin-top:4px; padding:4px 8px; font-size:0.7rem;" data-copy-value="${escapeAttr(displayVal)}">Copy Value</button>`
-          : '<span style="color: var(--text-muted);">[binary or large value]</span>';
+        const name = (k && typeof k === 'object') ? k.name : k;
+        const size = (k && typeof k === 'object' && k.size != null) ? String(k.size) + ' bytes' : '';
         return `
           <div style="margin-bottom:8px;">
-            <span class="tag" style="display:inline-block; margin-bottom:4px;">${escapeHtml(String(k))}</span>
-            <div>${valueHtml}</div>
+            <span class="tag" style="display:inline-block; margin-bottom:4px;">${escapeHtml(String(name ?? ''))}</span>
+            ${size ? `<span style="color: var(--text-muted); margin-left:8px;">${escapeHtml(size)}</span>` : ''}
           </div>
         `;
       }).join('') : '<span style="color: var(--text-muted);">No keys</span>';
@@ -3537,14 +3569,18 @@
       try {
         const TAB_IDS_TO_FETCH = RESOURCE_TAB_IDS;
         const enc = encodeURIComponent(selectedCluster);
-        const [summaryRes, ...resourceResults, costRes, scalingRes, retiredRes, fleetCostRes] = await Promise.all([
-          fetch('/api/cluster/' + enc + '/summary'),
-          ...TAB_IDS_TO_FETCH.map(id => fetch('/api/cluster/' + enc + '/' + id)),
-          fetch('/api/cluster/' + enc + '/cost'),
-          fetch('/api/cluster/' + enc + '/scaling'),
-          fetch('/api/cluster/' + enc + '/retired-nodes'),
-          fetch('/api/cost'),
+        const headers = authHeaders();
+        const responses = await Promise.all([
+          fetch('/api/cluster/' + enc + '/summary', { headers }),
+          ...TAB_IDS_TO_FETCH.map(id => fetch('/api/cluster/' + enc + '/' + id, { headers })),
+          fetch('/api/cluster/' + enc + '/cost', { headers }),
+          fetch('/api/cluster/' + enc + '/scaling', { headers }),
+          fetch('/api/cluster/' + enc + '/retired-nodes', { headers }),
+          fetch('/api/cost', { headers }),
         ]);
+        const summaryRes = responses[0];
+        const resourceResults = responses.slice(1, 1 + TAB_IDS_TO_FETCH.length);
+        const [costRes, scalingRes, retiredRes, fleetCostRes] = responses.slice(1 + TAB_IDS_TO_FETCH.length);
         const summary = summaryRes.ok ? await summaryRes.json() : {};
         _cache.summary = summary;
         const results = await Promise.all(resourceResults.map(r => r.ok ? r.json() : {}));
@@ -3626,20 +3662,23 @@
 
     // Persist admin key as the user types (so it can be reused across tabs/actions).
     el('addAdminKey').addEventListener('input', () => {
-      adminKey = el('addAdminKey').value || '';
+      setAccessKey(el('addAdminKey').value || '');
+    });
+    el('accessKey').addEventListener('input', () => {
+      setAccessKey(el('accessKey').value || '');
     });
 
     async function generateToken() {
       const clusterName = el('addClusterName').value.trim();
       // Use module-level adminKey so it can be reused elsewhere (e.g. delete cluster).
-      adminKey = el('addAdminKey').value || '';
+      setAccessKey(el('addAdminKey').value || '');
       addClusterConnected = false;
       el('addClusterError').style.display = 'none';
       el('addClusterError').textContent = '';
       try {
         const r = await fetch('/api/generate-token', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ cluster_name: clusterName }),
         });
         const data = await r.json().catch(() => ({}));
@@ -3778,12 +3817,17 @@
     });
 
     // --- Config: DASHBOARD_URL warning ---
-    fetch('/api/config').then(r => r.json()).then(data => {
-      if (!data.dashboardUrl) {
-        el('dashboardUrlWarning').textContent = '⚠ DASHBOARD_URL env var not set. Edit the command below to replace YOUR_DASHBOARD_URL with your actual dashboard URL before running.';
-        el('dashboardUrlWarning').style.display = 'block';
-      }
-    }).catch(() => {});
+    function fetchConfig() {
+      fetch('/api/config', { headers: authHeaders() }).then(r => r.ok ? r.json() : null).then(data => {
+        if (!data) return;
+        if (!data.dashboardUrl) {
+          el('dashboardUrlWarning').textContent = '⚠ DASHBOARD_URL env var not set. Edit the command below to replace YOUR_DASHBOARD_URL with your actual dashboard URL before running.';
+          el('dashboardUrlWarning').style.display = 'block';
+        } else {
+          el('dashboardUrlWarning').style.display = 'none';
+        }
+      }).catch(() => {});
+    }
 
     // --- Refresh button ---
     el('btnRefresh').addEventListener('click', (e) => {

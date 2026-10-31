@@ -76,7 +76,7 @@ class TestRegistrationEndToEnd(unittest.TestCase):
         )
         self.assertEqual(hb_resp.status_code, 200)
 
-        clusters = client.get("/api/clusters").get_json()
+        clusters = client.get("/api/clusters", headers={"X-Admin-Key": "master-bootstrap-key"}).get_json()
         self.assertEqual(len(clusters), 1)
         self.assertEqual(clusters[0]["name"], "prod")
         self.assertEqual(clusters[0]["summary"]["totalNodes"], 3)
@@ -87,7 +87,7 @@ class TestRegistrationEndToEnd(unittest.TestCase):
         dashboard2 = self._load_app()
         client2 = dashboard2.app.test_client()
 
-        clusters_after_restart = client2.get("/api/clusters").get_json()
+        clusters_after_restart = client2.get("/api/clusters", headers={"X-Admin-Key": "master-bootstrap-key"}).get_json()
         self.assertEqual(len(clusters_after_restart), 1)
         self.assertEqual(clusters_after_restart[0]["name"], "prod")
         self.assertIsNone(clusters_after_restart[0]["summary"])
@@ -102,7 +102,7 @@ class TestRegistrationEndToEnd(unittest.TestCase):
         )
         self.assertEqual(hb2.status_code, 200)
 
-        clusters_refreshed = client2.get("/api/clusters").get_json()
+        clusters_refreshed = client2.get("/api/clusters", headers={"X-Admin-Key": "master-bootstrap-key"}).get_json()
         self.assertEqual(clusters_refreshed[0]["summary"]["totalNodes"], 5)
 
     def test_helm_upgrade_without_token_uses_stored_credential(self):
