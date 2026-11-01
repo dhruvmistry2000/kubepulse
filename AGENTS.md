@@ -37,6 +37,7 @@ Two images: `dashboard/` and `agent/`. The Helm chart in `helm/` installs **only
 | `dashboard/pricing.py` + `prices.json` | Cost models (`usage` default, `instance`). |
 | `dashboard/templates/index.html` | Single-file dark UI (~3,800 lines). No build step. |
 | `helm/` | `k8s-dashboard-agent` chart (appVersion 1.0). |
+| `scripts/deploy-dashboard.sh` | Interactive dashboard deploy (Compose, Docker, or Kubernetes). |
 | `tests/` | `test_part_a_*` (registration persistence), `test_part_b.py` (pricing, history, node cost). |
 
 ## 3. Commands

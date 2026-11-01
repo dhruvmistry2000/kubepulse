@@ -16,6 +16,8 @@ services:
       STORAGE_PATH: /data/kubepulse/registry.json
       HISTORY_PATH: /data/kubepulse/history.json
       HELM_REPO_URL: ${HELM_REPO_URL:-https://dhruvmistry2000.github.io/kubepulse}
+      HELM_CHART_NAME: ${HELM_CHART_NAME:-k8s-dashboard-agent}
+      AGENT_IMAGE: ${AGENT_IMAGE:-dhruvmistry200/kubepulse-agent:latest}
     volumes:
       - dashboard-data:/data/kubepulse
     restart: unless-stopped

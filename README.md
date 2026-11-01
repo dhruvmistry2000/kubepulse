@@ -122,6 +122,7 @@ kubepulse/
 │       ├── service.yaml
 │       └── poddisruptionbudget.yaml
 ├── compose.yaml            # dashboard via docker compose
+├── scripts/deploy-dashboard.sh  # prompts for the dashboard URL and deploys it
 ├── .env.example
 └── terraform/local/        # kind cluster you can apply and destroy
 ```
@@ -163,8 +164,41 @@ export KUBECONFIG="$PWD/kubeconfig"
 
 ## Deployment Guide
 
-Pick one option depending on where you want to host the dashboard.  
-The dashboard URL must be reachable over HTTPS by your cluster nodes.
+The deploy script asks for the dashboard URL agents will call, the admin and viewer keys, and where to run the dashboard. From a checkout:
+
+```bash
+./scripts/deploy-dashboard.sh
+```
+
+The Helm release workflow has a separate job that commits that script to the `gh-pages` branch when the script changes. The chart is published by its own job.
+
+```bash
+curl -fsSL -o deploy-dashboard.sh https://dhruvmistry2000.github.io/kubepulse/deploy-dashboard.sh
+chmod +x deploy-dashboard.sh
+./deploy-dashboard.sh
+```
+
+The published copy can start the Docker image or install into Kubernetes. Docker Compose still needs a checkout of this repo, because it builds `dashboard/`.
+
+Press Enter on a key prompt to generate a random key. Generated keys are printed once and saved in a mode `600` env file.
+
+- **Docker Compose** builds `dashboard/` and writes `.env` in the repo. An existing `.env` is left alone unless you pass `--force`.
+- **Docker** runs `dhruvmistry200/kubepulse-dashboard:latest`. Keys go in `~/.config/kubepulse/dashboard.env`.
+- **Kubernetes** installs one replica and stores the registry on a volume. Keys go in a Secret, and the Deployment reads that Secret.
+
+`DASHBOARD_URL` is the address pods use. The script warns when that URL is a loopback address or plain HTTP on a public host. The agent is installed afterward from the Add Cluster helm command.
+
+Non-interactive:
+
+```bash
+DASHBOARD_URL=https://dashboard.example.com \
+  ./scripts/deploy-dashboard.sh --yes --target docker
+```
+
+`--dry-run` writes the env file and prints the command without starting anything.
+
+The sections below show the same steps as individual commands.  
+The dashboard URL must be reachable by your cluster nodes. Use HTTPS anywhere that is not a private lab.
 
 #### Option A – Google Cloud Run (recommended)
 
