@@ -110,17 +110,20 @@ kubepulse/
 ├── agent/
 │   ├── app.py              # Flask agent (runs in cluster)
 │   └── Dockerfile          # Agent container
-└── helm/
-    ├── Chart.yaml
-    ├── values.yaml
-    └── templates/
-        ├── deployment.yaml
-        ├── serviceaccount.yaml
-        ├── clusterrole.yaml
-        ├── clusterrolebinding.yaml
-        ├── secret.yaml
-        ├── service.yaml
-        └── poddisruptionbudget.yaml
+├── helm/
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   └── templates/
+│       ├── deployment.yaml
+│       ├── serviceaccount.yaml
+│       ├── clusterrole.yaml
+│       ├── clusterrolebinding.yaml
+│       ├── secret.yaml
+│       ├── service.yaml
+│       └── poddisruptionbudget.yaml
+├── compose.yaml            # dashboard via docker compose
+├── .env.example
+└── terraform/local/        # kind cluster you can apply and destroy
 ```
 
 ---
@@ -140,6 +143,21 @@ kubepulse/
   - Google Cloud Run (recommended; has a free tier)
   - Any VM or server behind nginx + SSL
   - `ngrok` for local testing
+- **Terraform >= 1.5** and **kind**, only if you want the local cluster in `terraform/local`
+
+---
+
+## Local cluster
+
+`terraform/local` creates a one-node kind cluster you can delete when you are done. It does not install the agent. From that directory:
+
+```bash
+terraform init
+terraform apply
+export KUBECONFIG="$PWD/kubeconfig"
+```
+
+`terraform output dashboard_url_from_pods` is the URL the agent must use for `dashboardUrl`. Stop the cluster with `docker stop kubepulse-control-plane` and start it again with `docker start`. `terraform destroy` removes it. Details are in `terraform/local/README.md`.
 
 ---
 
@@ -165,7 +183,19 @@ gcloud run deploy kubepulse-dashboard \
 Cloud Run provides an HTTPS URL immediately.  
 Note this URL; you will use it in Step 3. The service must stay reachable by the browser and the agent. API reads require `VIEWER_KEY` or `ADMIN_KEY`; do not rely on an open read API. Keep `--max-instances=1`: registration tokens and live metrics live in memory, and a second instance would miss tokens and overwrite the registry.
 
-#### Option B – Docker on any VM
+#### Option B – Docker Compose
+
+```bash
+cp .env.example .env
+# edit ADMIN_KEY, VIEWER_KEY, and DASHBOARD_URL
+docker compose up -d
+```
+
+The UI is at `http://127.0.0.1:8080`. `docker compose up` builds `dashboard/` into `kubepulse-dashboard:local`. Registry and history stay in the `dashboard-data` volume. Keep a single container: a second copy would miss registration tokens and overwrite the registry.
+
+`DASHBOARD_URL` is the address agents use, not the browser address. On the local kind cluster that is the host gateway and published port, for example `http://172.19.0.1:8080`.
+
+The same image can be started without Compose:
 
 ```bash
 ## Using Docker Hub
@@ -187,7 +217,7 @@ docker run -d \
   ghcr.io/dhruvmistry200/kubepulse-dashboard:latest
 ```
 
-Place either container behind nginx (or similar) with SSL/TLS termination.  
+Place the container behind nginx (or similar) with SSL/TLS termination.  
 The dashboard **must** be accessible over HTTPS for agents to reach it.
 
 #### Option C – Inside Kubernetes

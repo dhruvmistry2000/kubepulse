@@ -1,0 +1,33 @@
+# Single dashboard. Live metrics and registration tokens are in memory, so do not scale this service.
+services:
+  dashboard:
+    image: kubepulse-dashboard:local
+    pull_policy: build
+    build:
+      context: ./dashboard
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
+    environment:
+      ADMIN_KEY: ${ADMIN_KEY:?Set ADMIN_KEY in .env}
+      VIEWER_KEY: ${VIEWER_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+      DASHBOARD_URL: ${DASHBOARD_URL:-}
+      STORAGE_BACKEND: file
+      STORAGE_PATH: /data/kubepulse/registry.json
+      HISTORY_PATH: /data/kubepulse/history.json
+    volumes:
+      - dashboard-data:/data/kubepulse
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  dashboard-data:

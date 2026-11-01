@@ -21,3 +21,12 @@ build/
 .coverage
 htmlcov/
 docs/
+
+# terraform/local kind cluster (kubeconfig and state stay on this machine)
+terraform/local/.terraform/
+terraform/local/kubeconfig
+terraform/local/cluster.env
+terraform/local/*.tfstate
+terraform/local/*.tfstate.*
+terraform/local/crash.log
+terraform/local/crash.*.log
