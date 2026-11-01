@@ -248,14 +248,7 @@ kubectl expose deployment kubepulse-dashboard \
 3. Enter the access key you set in Step 2 (`VIEWER_KEY` to view, `ADMIN_KEY` to add or delete).
 4. Enter a name for your cluster (for example, `production`, `staging`, `dev`).
 5. Click **Generate Install Token**.
-6. Copy the generated Helm command and run it against your cluster. The chart stores the token, dashboard URL, and cluster name in a Secret:
-
-```bash
-helm install kubepulse-agent ./helm \
-  --set registrationToken=PASTE_TOKEN_FROM_DASHBOARD \
-  --set dashboardUrl=https://YOUR_DASHBOARD_URL \
-  --set clusterName=production
-```
+6. Copy the generated Helm command and run it against your cluster. It installs `k8s-dashboard-agent` from the chart repo published to GitHub Pages (`https://dhruvmistry2000.github.io/kubepulse`). The chart stores the token, dashboard URL, and cluster name in a Secret.
 
 > The agent image defaults to `dhruvmistry200/kubepulse-agent:latest`.  
 > No need to set `image.repository` or `image.tag` unless using a custom build.
@@ -335,6 +328,8 @@ You can also delete a cluster using the 🗑 button in the dashboard sidebar.
 | PRICE_CACHE_DIR | No | system temp dir | Disk cache for public price lists. Heartbeats never download prices |
 | MAX_CONTENT_LENGTH | No | `2097152` | Maximum request body size, in bytes |
 | STORE_WRITE_DEBOUNCE_SECONDS | No | `2` | Delay between later registry and history writes. The first write is immediate |
+| HELM_REPO_URL | No | `https://dhruvmistry2000.github.io/kubepulse` | Helm repo shown on Add Cluster. Published by the Helm release workflow |
+| HELM_CHART_NAME | No | `k8s-dashboard-agent` | Chart name in that repo |
 
 **Cloud Run:** use `STORAGE_BACKEND=gcs` with a GCS bucket — local disk is ephemeral.
 
@@ -463,14 +458,7 @@ gcloud run deploy kubepulse-dashboard \
 
 **3. helm install command** — override at install time:
 
-```bash
-helm install kubepulse-agent ./helm \
-  --set image.repository=YOUR_REGISTRY/kubepulse-agent \
-  --set image.tag=v1 \
-  --set registrationToken=TOKEN \
-  --set dashboardUrl=https://YOUR_DASHBOARD \
-  --set clusterName=production
-```
+The Add Cluster command already sets `image.repository` and `image.tag` from `AGENT_IMAGE`, and it installs the chart from `HELM_REPO_URL`. Change those `--set` values in the copied command to override one install.
 
 ### Build and push steps
 
@@ -495,7 +483,7 @@ docker push YOUR_REGISTRY/kubepulse-agent:latest
 
 This repo includes GitHub Actions workflows that lint every branch.
 A merge to `main` publishes the dashboard image when `dashboard/` changes,
-and the agent image when `agent/` changes.
+and the agent image when `agent/` changes. The Helm chart is published to GitHub Pages when `helm/` changes.
 See `.github/workflows/` for details.
 
 To use them with your own registry:

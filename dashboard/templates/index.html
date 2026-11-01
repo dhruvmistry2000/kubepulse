@@ -1026,6 +1026,9 @@
             </div>
           </div>
 
+          <p style="margin: 12px 0 4px; font-size: 0.875rem;">Helm chart</p>
+          <div class="code-block" id="chartUrl"></div>
+
           <p style="margin: 12px 0 4px; font-size: 0.875rem;">Helm Install Command</p>
           <div class="code-block-wrap">
             <div class="code-block" id="helmCommand"></div>
@@ -4065,6 +4068,7 @@
         tokenExpiresAt = new Date(data.expires_at).getTime();
         currentToken = data.token || null;
         currentHelmCommand = data.helm_command || null;
+        el('chartUrl').textContent = data.chart_url || '';
         el('tokenBlock').style.display = 'block';
         const tokenInput = el('registrationTokenInput');
         if (tokenInput) {

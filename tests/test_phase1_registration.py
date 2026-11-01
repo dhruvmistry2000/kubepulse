@@ -125,6 +125,10 @@ class TestPendingRegistration(unittest.TestCase):
         self.assertIn("--set registrationToken=", issued["helm_command"])
         self.assertIn("clusterName=production", issued["helm_command"])
         self.assertNotIn("kubectl create secret", issued["helm_command"])
+        self.assertIn("https://dhruvmistry2000.github.io/kubepulse", issued["helm_command"])
+        self.assertIn("kubepulse/k8s-dashboard-agent", issued["helm_command"])
+        self.assertNotIn("./helm", issued["helm_command"])
+        self.assertEqual(issued["chart_url"], "https://dhruvmistry2000.github.io/kubepulse")
 
         reg = client.post(
             "/api/register",

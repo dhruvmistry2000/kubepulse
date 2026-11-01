@@ -70,6 +70,11 @@ DEBUG_MODE = _env_flag("FLASK_DEBUG") or _env_flag("DEBUG")
 if not ADMIN_KEY and not DEBUG_MODE:
     raise SystemExit("ADMIN_KEY is required. Refusing to start.")
 DASHBOARD_URL = (os.environ.get("DASHBOARD_URL") or "").strip()
+# Published by .github/workflows/helm-release.yaml onto GitHub Pages.
+HELM_REPO_URL = (
+    os.environ.get("HELM_REPO_URL") or "https://dhruvmistry2000.github.io/kubepulse"
+).rstrip("/")
+HELM_CHART_NAME = (os.environ.get("HELM_CHART_NAME") or "k8s-dashboard-agent").strip()
 AGENT_IMAGE = os.environ.get(
     "AGENT_IMAGE",
     "dhruvmistry200/kubepulse-agent:latest",
@@ -367,8 +372,11 @@ def api_generate_token():
         img_tag = "latest"
 
     # Chart templates copy these values into a Secret. The pod reads that Secret.
+    # The chart is the GitHub Pages repo from the Helm release workflow.
+    chart_url = HELM_REPO_URL
     helm_command = (
-        "helm install kubepulse-agent ./helm \\\n"
+        f"helm repo add kubepulse {chart_url} --force-update\n"
+        f"helm install kubepulse-agent kubepulse/{HELM_CHART_NAME} \\\n"
         f"  --set image.repository={img_repo} \\\n"
         f"  --set image.tag={img_tag} \\\n"
         f"  --set registrationToken={token} \\\n"
@@ -382,6 +390,7 @@ def api_generate_token():
         "cluster_name": cluster_name,
         "expires_at": expires_at.isoformat(),
         "expires_in_seconds": TOKEN_EXPIRY_SECONDS,
+        "chart_url": chart_url,
         "helm_command": helm_command,
     }), 200
 
