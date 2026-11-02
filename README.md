@@ -32,7 +32,7 @@ helm search repo kubepulse
 Once your dashboard is running and you have a registration token, install the agent into your cluster:
 
 ```bash
-helm install kubepulse-agent kubepulse/kubepulse \
+helm install kubepulse-agent kubepulse/k8s-dashboard-agent \
   --set registrationToken=<TOKEN_FROM_DASHBOARD> \
   --set dashboardUrl=https://<YOUR_DASHBOARD_URL> \
   --set clusterName=<YOUR_CLUSTER_NAME>
@@ -42,31 +42,16 @@ helm install kubepulse-agent kubepulse/kubepulse \
 
 ## Dashboard Setup
 
-The agent needs a running KubePulse dashboard to push data to. The easiest option is Google Cloud Run:
+Run the dashboard before the agent. The script on this site asks for the URL agents will call, and for the admin and viewer keys:
 
 ```bash
-gcloud run deploy kubepulse-dashboard \
-  --image dhruvmistry200/kubepulse-dashboard:latest \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars SECRET_KEY=your-strong-secret \
-  --set-env-vars ADMIN_KEY=your-admin-key \
-  --port 8080
+curl -fsSL -o deploy-dashboard.sh \
+  https://dhruvmistry2000.github.io/kubepulse/deploy-dashboard.sh
+chmod +x deploy-dashboard.sh
+./deploy-dashboard.sh
 ```
 
-Or run it with Docker on any VM:
-
-```bash
-docker run -d \
-  --name kubepulse-dashboard \
-  -p 8080:8080 \
-  -e SECRET_KEY=your-strong-secret \
-  -e ADMIN_KEY=your-admin-key \
-  dhruvmistry200/kubepulse-dashboard:latest
-```
-
-> The dashboard **must** be reachable over HTTPS from your cluster nodes.
+The dashboard must be reachable from your cluster nodes. Use HTTPS anywhere that is not a private lab. API reads require `VIEWER_KEY` or `ADMIN_KEY`.
 
 ---
 
@@ -97,7 +82,7 @@ All configurable values and their defaults:
 ### Example with all options
 
 ```bash
-helm install kubepulse-agent kubepulse/kubepulse \
+helm install kubepulse-agent kubepulse/k8s-dashboard-agent \
   --set registrationToken=abc123 \
   --set dashboardUrl=https://my-dashboard.run.app \
   --set clusterName=production \
@@ -121,7 +106,7 @@ image:
 ```
 
 ```bash
-helm install kubepulse-agent kubepulse/kubepulse -f my-values.yaml
+helm install kubepulse-agent kubepulse/k8s-dashboard-agent -f my-values.yaml
 ```
 
 ---
@@ -137,13 +122,13 @@ Each cluster needs its own unique `clusterName` and a fresh registration token. 
 To upgrade without generating a new token:
 
 ```bash
-helm upgrade kubepulse-agent kubepulse/kubepulse --reuse-values
+helm upgrade kubepulse-agent kubepulse/k8s-dashboard-agent --reuse-values
 ```
 
 If the registration token has expired, generate a new one from the dashboard and run:
 
 ```bash
-helm upgrade kubepulse-agent kubepulse/kubepulse \
+helm upgrade kubepulse-agent kubepulse/k8s-dashboard-agent \
   --set registrationToken=NEW_TOKEN \
   --reuse-values
 ```

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 64" width="270" height="64" role="img" aria-label="kubepulse">
+  <polygon points="32,4 53.89,14.54 59.3,38.23 44.15,57.23 19.85,57.23 4.7,38.23 10.11,14.54"
+           fill="none" stroke="#60a5fa" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M10 34 H21 L26 22 L32 46 L38 28 L42 34 H54"
+        fill="none" stroke="#60a5fa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="78" y="45" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif"
+        font-size="38" font-weight="600" letter-spacing="-0.8">
+    <tspan fill="#f8fafc">kube</tspan><tspan fill="#60a5fa">pulse</tspan>
+  </text>
+</svg>
