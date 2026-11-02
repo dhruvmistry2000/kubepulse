@@ -121,9 +121,6 @@ kubepulse/
 │       ├── secret.yaml
 │       ├── service.yaml
 │       └── poddisruptionbudget.yaml
-├── index.html              # project site; published to GitHub Pages
-├── styles.css
-├── assets/                 # kubepulse logos used by the site
 ├── compose.yaml            # dashboard via docker compose
 ├── scripts/deploy-dashboard.sh  # prompts for the dashboard URL and deploys it
 ├── .env.example

@@ -61,8 +61,6 @@ class DeployDashboardScriptTest(unittest.TestCase):
         self.assertIn("git push", script)
         self.assertIn("gh-pages-publish", chart)
         self.assertIn("gh-pages-publish", script)
-        self.assertIn("publish-website:", script)
-        self.assertIn("gh-pages/assets/", script)
 
     def test_help_lists_url_and_targets(self):
         proc = self.run_script(["--help"], self.env())
